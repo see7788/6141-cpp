@@ -99,8 +99,7 @@ public:
     }
     bool readFile(JsonVariant obj)
     {
-        // StaticJsonDocument<2000> doc;
-        DynamicJsonDocument doc(2000);
+        JsonDocument doc;
         // ESP_LOGV("", " %i", doc.capacity());
         bool c = readFile(doc);
         if (c)

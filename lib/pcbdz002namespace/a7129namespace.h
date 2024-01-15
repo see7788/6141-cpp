@@ -523,33 +523,35 @@ namespace a7129namespace
         typedef std::tuple<String, idsInfo_t, int, int> config_t;
         QueueHandle_t crcRxQueueHandle;
         config_t config;
-        void config_set(JsonVariant ref) {
-            JsonArray json_ybl = ref.as<JsonArray>();
-            JsonObject json_ybldata = json_ybl[1].as<JsonObject>();
+        void config_set(JsonArray json) {
+            // JsonArray json = ref.to<JsonArray>();
+            JsonObject json1 = json[1].as<JsonObject>();
             idsInfo_t idsInfo;
-            for (const auto& kvp : json_ybldata)
+            for (JsonPair pair : json1)
             {
-                id_t id = kvp.value()["id"].as<id_t>();
+                JsonObject v = pair.value().as<JsonObject>();
                 idInfo_t idinfo = {
-                    .type = kvp.value()["type"].as<type_t>(),
-                    .state = kvp.value()["state"].as<state_t>() };
+                    .type = v["type"].as<type_t>(),
+                    .state = v["state"].as<state_t>() };
+                std::string key_str = pair.key().c_str();
+                id_t id = static_cast<id_t>(std::stoul(key_str));
                 idsInfo.emplace(id, idinfo);
             }
-            config = std::make_tuple(json_ybl[0].as<String>(), idsInfo, json_ybl[2].as<int>(), json_ybl[3].as<int>());
+            config = std::make_tuple(json[0].as<String>(), idsInfo, json[2].as<int>(), json[3].as<int>());
         }
-        void config_get(JsonVariant ref) {
-            JsonArray json_ybl = ref.as<JsonArray>();
-            json_ybl.add(std::get<0>(config));
+        void config_get(JsonArray json) {
+            // JsonArray json = ref.to<JsonArray>();
+            json.add(std::get<0>(config));
             idsInfo_t& idsInfo = std::get<1>(config);
-            JsonObject json_idsInfo = json_ybl.createNestedObject();
+            JsonObject json_idsInfo = json.add<JsonObject>();
             for (const auto& pair : idsInfo)
             {
-                JsonObject json_yblidinfo = json_idsInfo.createNestedObject(String(pair.first));
+                JsonObject json_yblidinfo = json_idsInfo[String(pair.first)].add<JsonObject>();
                 json_yblidinfo["type"] = pair.second.type;
                 json_yblidinfo["state"] = pair.second.state;
             }
-            json_ybl.add(std::get<2>(config));
-            json_ybl.add(std::get<3>(config));
+            json.add(std::get<2>(config));
+            json.add(std::get<3>(config));
             //ESP_LOGV("debug", "%s,%d,%d", std::get<0>(config).c_str(), std::get<2>(config), std::get<3>(config));
         }
         void send(id_t id, state_t state)
@@ -572,9 +574,9 @@ namespace a7129namespace
             StrobeCMD(CMD_PLL);
             StrobeCMD(CMD_RX); // 设置为接收模式
         }
-        void api(JsonVariant ref)
+        void api(JsonArray c)
         {
-            JsonArray c = ref.as<JsonArray>();
+            //JsonArray c = ref.as<JsonArray>();
             String api = c[0].as<String>();
             if (api.indexOf(".config_set") > -1) {
                 c[0].set("mcu_ybl_set");
@@ -583,8 +585,8 @@ namespace a7129namespace
             else if (api.indexOf(".config_get") > -1) {
                 c.clear();
                 c[0].set("mcu_ybl_set");
-                JsonObject db = c.createNestedObject();
-                JsonArray config = db.createNestedArray("mcu_ybl");
+                JsonObject db = c.add<JsonObject>();
+                JsonArray config = db["mcu_ybl"].add<JsonArray>();
                 config_get(config);
             }
             else if (api.indexOf(".config.idsInfo.clear") > -1)
@@ -592,14 +594,14 @@ namespace a7129namespace
                 std::get<1>(config).clear();
                 c.clear();
                 c[0].set("mcu_ybl_set");
-                JsonObject db = c.createNestedObject();
-                JsonArray config = db.createNestedArray("mcu_ybl");
+                JsonObject db = c.add<JsonObject>();
+                JsonArray config = db["mcu_ybl"].add<JsonArray>();
                 config_get(config);
             }
             else {
                 c[0].set(api + " api error");
             }
-        }       
+        }
         void CRC16_Init(void)
         {
             CRC16_High = 0x1D;
@@ -700,16 +702,22 @@ namespace a7129namespace
                             .state = state_val };
                         if (xTaskGetTickCount() - lastWakeTime >= pdMS_TO_TICKS(pd_tick)) {
                             lastWakeTime = xTaskGetTickCount();
+                            JsonDocument c0;
+                            c0.add(".config_get");
+                            JsonArray c1=c0.as<JsonArray>();
+                            api(c1);
+                            String str;
+                            serializeJson(c0, str);
                             myStruct_t obj = myStruct_t{
                                               .sendTo_name = sendTo_name,// std::get<0>(config),
-                                              .str = "[\"mcu_ybl.config_get\"]"
+                                              .str = str
                             };
-                            DynamicJsonDocument doc(3000);
                             if (xQueueSend(param->onMessageQueueHandle, &obj, 50) != pdPASS)
                                 ESP_LOGV("debug", "Queue is full");
                         }
                     }
                 }
+                // ESP_LOGV("loop", "..........");
             }
         }
     }

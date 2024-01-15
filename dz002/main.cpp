@@ -86,8 +86,9 @@ void esp_eg_on(void* registEr, esp_event_base_t postEr, int32_t eventId, void* e
   // ESP_LOGD("DEBUG", "registEr:%s,use:%d,postEr:%s, eventId:%d,eventData:%s", er, use, postEr, eventId, (char *)eventData);
   ESP_LOGD("esp_eg_on", "registEr:%s,use:%d,postEr:%s, eventId:%d", er, use, postEr, eventId);
 }
-void config_set(JsonVariant obj)
+void config_set(JsonVariant ref)
 {
+  JsonObject obj=ref.as<JsonObject>();
   if (obj.containsKey("mcu_base"))
   {
     JsonArray json_base = obj["mcu_base"].as<JsonArray>();
@@ -128,34 +129,35 @@ void config_set(JsonVariant obj)
     config.mcu_wsServer = std::make_tuple(json_wsServer[0].as<String>(), json_wsServer[1].as<String>());
   }
 }
-void config_get(JsonVariant obj)
+void config_get(JsonVariant ref)
 {
-  JsonArray json_base = obj.createNestedArray("mcu_base");
+  JsonObject obj=ref.as<JsonObject>();
+  JsonArray json_base = obj["mcu_base"].to<JsonArray>();
   json_base.add(std::get<0>(config.mcu_base));
   json_base.add(std::get<1>(config.mcu_base));
   json_base.add(std::get<2>(config.mcu_base));
   json_base.add(std::get<3>(config.mcu_base));
   json_base.add(std::get<4>(config.mcu_base));
-  JsonArray json_serial = obj.createNestedArray("mcu_serial");
+  JsonArray json_serial = obj["mcu_serial"].to<JsonArray>();
   json_serial.add(std::get<0>(config.mcu_serial));
   json_serial.add(std::get<1>(config.mcu_serial));
   json_serial.add(std::get<2>(config.mcu_serial));
-  JsonArray json_net = obj.createNestedArray("mcu_net");
+  JsonArray json_net = obj["mcu_net"].to<JsonArray>();
   json_net.add(std::get<0>(config.mcu_net));
-  JsonArray json_net_ap = json_net.createNestedArray();
+  JsonArray json_net_ap = json_net.add<JsonArray>();
   MyNet::ap_t mcu_net_ap = std::get<1>(config.mcu_net);
   json_net_ap.add(std::get<0>(mcu_net_ap));
-  JsonArray json_net_sta = json_net.createNestedArray();
+  JsonArray json_net_sta = json_net.add<JsonArray>();
   MyNet::sta_t mcu_net_sta = std::get<2>(config.mcu_net);
   json_net_sta.add(std::get<0>(mcu_net_sta));
   json_net_sta.add(std::get<1>(mcu_net_sta));
-  JsonArray json_ybl = obj.createNestedArray("mcu_ybl");
+  JsonArray json_ybl = obj["mcu_ybl"].to<JsonArray>();
   yblnamespace::config_get(json_ybl);
-  JsonArray json_webPageServer = obj.createNestedArray("mcu_webPageServer");
+  JsonArray json_webPageServer = obj["mcu_webPageServer"].to<JsonArray>();
   json_webPageServer.add(std::get<0>(config.mcu_webPageServer));
-  JsonArray json_esServer = obj.createNestedArray("mcu_esServer");
+  JsonArray json_esServer =obj["mcu_esServer"].to<JsonArray>();
   json_esServer.add(std::get<0>(config.mcu_esServer));
-  JsonArray json_wsServer = obj.createNestedArray("mcu_wsServer");
+  JsonArray json_wsServer = obj["mcu_wsServer"].to<JsonArray>();
   json_wsServer.add(std::get<0>(config.mcu_wsServer));
   json_wsServer.add(std::get<1>(config.mcu_wsServer));
 }
@@ -219,7 +221,7 @@ void resTask(void* nullparam)
       };
     if (xQueueReceive(state.resQueueHandle, &resStruct, portMAX_DELAY) == pdPASS)
     {
-      DynamicJsonDocument resdoc(3000);
+      JsonDocument resdoc;
       DeserializationError error = deserializeJson(resdoc, resStruct.str);
       if (error)
       {
@@ -242,12 +244,12 @@ void resTask(void* nullparam)
           if (api == "mcu_state_get")
           {
             root[0].set("set");
-            JsonObject db = root.createNestedObject();
+            JsonObject db = root.add<JsonObject>();
             config_get(db);
-            JsonArray mcu_state = db.createNestedArray("mcu_state");
+            JsonArray mcu_state = db["mcu_state"].add<JsonArray>();
             uint32_t ulBits = xEventGroupGetBits(state.eg_Handle); // 获取 Event Group 变量当前值
             mcu_state.add(state.macId);
-            JsonArray egBit = mcu_state.createNestedArray();
+            JsonArray egBit = mcu_state.add<JsonArray>();
             for (int i = sizeof(ulBits) * 8 - 1; i >= 0; i--)
             { // 循环输出每个二进制位
               uint32_t mask = 1 << i;
@@ -267,7 +269,7 @@ void resTask(void* nullparam)
           }
           else if (api == "i18n_get") {
             root[0].set("set");
-            JsonObject db = root.createNestedObject();
+            JsonObject db = root.add<JsonObject>();
             if (state.fsI18nObj->readFile(db))
               sendToFun();
             else
@@ -290,14 +292,14 @@ void resTask(void* nullparam)
           else if (api == "config_get")
           {
             root[0].set("config_set");
-            JsonObject db = root.createNestedObject();
+            JsonObject db = root.add<JsonObject>();
             config_get(db);
             sendToFun();
           }
           else if (api == "config_toFileRestart")
           {
             root[0].set("config_set");
-            JsonObject db = root.createNestedObject();
+            JsonObject db = root.add<JsonObject>();
             config_get(db);
             bool success = state.fsConfigObj->writeFile(db);
             if (success)
@@ -313,7 +315,7 @@ void resTask(void* nullparam)
           else if (api == "config_fromFileRestart")
           {
             root[0].set("config_set");
-            JsonObject db = root.createNestedObject();
+            JsonObject db = root.add<JsonObject>();
             bool success = state.fsConfigObj->readFile(db);
             if (success)
             {
@@ -375,7 +377,7 @@ void setup()
   ESP_ERROR_CHECK(esp_event_handler_register(ETH_EVENT, ESP_EVENT_ANY_ID, esp_eg_on, (void*)__func__));
   ESP_ERROR_CHECK(esp_event_handler_register(SC_EVENT, ESP_EVENT_ANY_ID, esp_eg_on, (void*)__func__));
 
-  DynamicJsonDocument doc(2000);
+  JsonDocument doc;
   JsonVariant obj = doc.as<JsonVariant>();
   state.fsConfigObj->readFile(obj); // 与下行代码交换位置，会不正常
   config_set(obj);
