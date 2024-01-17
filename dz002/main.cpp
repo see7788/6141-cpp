@@ -210,28 +210,28 @@ void resTask(void* nullparam)
   xEventGroupSetBits(state.eg_Handle, EGBIG_RES);
   for (;;)
   {
+    myStruct_t reqStruct;
+    auto sendToDebug = [&reqStruct, &resStruct](String str) {
+      reqStruct.sendTo_name = std::get<3>(config.mcu_base);
+      concatAny(reqStruct.str, "[\"%s\",%s]", str.c_str(), resStruct.str.c_str());
+      if (xQueueSend(state.reqQueueHandle, &reqStruct, 0) != pdPASS)
+      {
+        ESP_LOGD("resTask", "reqQueueHandle is full");
+      }
+      };
     if (xQueueReceive(state.resQueueHandle, &resStruct, portMAX_DELAY) == pdPASS)
     {
       JsonDocument resdoc;
       DeserializationError error = deserializeJson(resdoc, resStruct.str);
-      myStruct_t reqStruct;
-      auto sendToDebug = [&](String str) {
-        reqStruct.sendTo_name = std::get<3>(config.mcu_base);
-        reqStruct.str = str;
-        if (xQueueSend(state.reqQueueHandle, &reqStruct, 0) != pdPASS)
-        {
-          ESP_LOGD("resTask", "reqQueueHandleIsFull");
-        }
-        };
       if (error)
       {
-        sendToDebug("[\"resTaskDeserializeJsonError\"]");
+        sendToDebug("resTask deserializeJson Error");
       }
       else
       {
         JsonArray root = resdoc.as<JsonArray>();
         String api = root[0].as<String>();
-        auto sendToFun = [&]() {
+        auto sendToFun = [root, &resStruct, &reqStruct]() {
           reqStruct.sendTo_name = resStruct.sendTo_name;
           serializeJson(root, reqStruct.str);
           if (xQueueSend(state.reqQueueHandle, &reqStruct, 0) != pdPASS)
@@ -324,8 +324,7 @@ void resTask(void* nullparam)
               ESP.restart();
             }
             else {
-              reqStruct.sendTo_name = std::get<3>(config.mcu_base);
-              reqStruct.str = "resTask fsConfigObj->readFile error";
+              sendToDebug("resTask fsConfigObj->readFile error");
             }
           }
           else if (api.indexOf("mcu_ybl") > -1)
@@ -347,7 +346,7 @@ void resTask(void* nullparam)
     }
     else
     {
-      ESP_LOGD("resTask", "resTask xQueueReceive != pdPASS");
+      sendToDebug("resTask xQueueReceive != pdPASS");
     }
   }
 }
