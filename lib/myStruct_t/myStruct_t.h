@@ -2,6 +2,7 @@
 #define myStruct_t_h
 #include <Arduino.h>
 #include <stdarg.h>
+#include <stdio.h>
 typedef struct
 {
     String sendTo_name;

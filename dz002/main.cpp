@@ -9,7 +9,6 @@
 #include <freertos/queue.h>
 #include <esp_event.h>
 #include <esp_task_wdt.h>
-#include <esp_log.h>
 #include <FS.h>
 #include <Arduino.h>
 #include <IPAddress.h>
@@ -17,11 +16,11 @@
 #include <ArduinoJson.h>
 #include <myStruct_t.h>
 #include <pcbdz002namespace.h>
-#include <a7129namespace.h>
 #include <MyFs.h>
 #include <MyNet.h>
 #include <MyServer.h>
 #include <myClientnamespace.h>
+#include <esp_log.h>
 // #include <myBlenamespace.h>
 // #include <HardwareSerial.h>//硬串口,Software Serial软串口
 
@@ -36,7 +35,7 @@
 #define EGBIG_WEBPAGE (1 << 9)
 #define EGBIG_ESSERVER (1 << 10)
 #define EGBIG_OTA (1 << 11)
-namespace yblnamespace = a7129namespace::yblnamespace;
+namespace yblnamespace = pcbdz002namespace::yblnamespace;
 typedef struct
 {
   std::tuple<String, String, String, String, String> mcu_base;
@@ -88,7 +87,7 @@ void esp_eg_on(void* registEr, esp_event_base_t postEr, int32_t eventId, void* e
 }
 void config_set(JsonVariant ref)
 {
-  JsonObject obj=ref.as<JsonObject>();
+  JsonObject obj = ref.as<JsonObject>();
   if (obj.containsKey("mcu_base"))
   {
     JsonArray json_base = obj["mcu_base"].as<JsonArray>();
@@ -131,7 +130,7 @@ void config_set(JsonVariant ref)
 }
 void config_get(JsonVariant ref)
 {
-  JsonObject obj=ref.as<JsonObject>();
+  JsonObject obj = ref.as<JsonObject>();
   JsonArray json_base = obj["mcu_base"].to<JsonArray>();
   json_base.add(std::get<0>(config.mcu_base));
   json_base.add(std::get<1>(config.mcu_base));
@@ -155,7 +154,7 @@ void config_get(JsonVariant ref)
   yblnamespace::config_get(json_ybl);
   JsonArray json_webPageServer = obj["mcu_webPageServer"].to<JsonArray>();
   json_webPageServer.add(std::get<0>(config.mcu_webPageServer));
-  JsonArray json_esServer =obj["mcu_esServer"].to<JsonArray>();
+  JsonArray json_esServer = obj["mcu_esServer"].to<JsonArray>();
   json_esServer.add(std::get<0>(config.mcu_esServer));
   JsonArray json_wsServer = obj["mcu_wsServer"].to<JsonArray>();
   json_wsServer.add(std::get<0>(config.mcu_wsServer));
@@ -176,16 +175,16 @@ void reqTask(void* nullparam)
     {
       //ESP_LOGV("xQueueReceive", "%s", myStruct.str.c_str());
       if (myStruct.sendTo_name == "mcu_esServer" && state.myServerObj->esObj == nullptr) {
-        concatAny(myStruct.str, "[\"state.myServerObj->esObj==nullptr\",\"%s\"]", myStruct.str.c_str());
         myStruct.sendTo_name = "mcu_serial";
+        myStruct.str = "[\"state.myServerObj->esObj==nullptr\",\"" + myStruct.str + "\"]";
       }
       else if (myStruct.sendTo_name == "mcu_wsServer" && state.myServerObj->wsObj == nullptr) {
-        concatAny(myStruct.str, "[\"state.myServerObj->wsObj==nullptr\",\"%s\"]", myStruct.str.c_str());
         myStruct.sendTo_name = "mcu_serial";
+        myStruct.str = "[\"state.myServerObj->wsObj==nullptr\",\"" + myStruct.str + "\"]";
       }
       else if (myStruct.sendTo_name.isEmpty()) {
-        concatAny(myStruct.str, "[\"sendTo_name.isEmpty()\",\"%s\"]", myStruct.str.c_str());
         myStruct.sendTo_name = "mcu_serial";
+        myStruct.str = "[\"sendTo_name.isEmpty()\",\"" + myStruct.str + "\"]";
       }
       if (myStruct.sendTo_name == "mcu_esServer") {
         state.myServerObj->esObj->send(myStruct.str.c_str());
@@ -204,34 +203,35 @@ void reqTask(void* nullparam)
     }
   }
 }
+
 void resTask(void* nullparam)
 {
   myStruct_t resStruct;
   xEventGroupSetBits(state.eg_Handle, EGBIG_RES);
   for (;;)
   {
-    myStruct_t reqStruct;
-    auto sendToDebug = [&reqStruct, &resStruct](String str) {
-      reqStruct.sendTo_name = std::get<3>(config.mcu_base);
-      concatAny(reqStruct.str, "[\"%s\",%s]", str.c_str(), resStruct.str.c_str());
-      if (xQueueSend(state.reqQueueHandle, &reqStruct, 0) != pdPASS)
-      {
-        ESP_LOGD("resTask", "reqQueueHandle is full");
-      }
-      };
     if (xQueueReceive(state.resQueueHandle, &resStruct, portMAX_DELAY) == pdPASS)
     {
       JsonDocument resdoc;
       DeserializationError error = deserializeJson(resdoc, resStruct.str);
+      myStruct_t reqStruct;
+      auto sendToDebug = [&](String str) {
+        reqStruct.sendTo_name = std::get<3>(config.mcu_base);
+        reqStruct.str = str;
+        if (xQueueSend(state.reqQueueHandle, &reqStruct, 0) != pdPASS)
+        {
+          ESP_LOGD("resTask", "reqQueueHandleIsFull");
+        }
+        };
       if (error)
       {
-        sendToDebug("resTask deserializeJson Error");
+        sendToDebug("[\"resTaskDeserializeJsonError\"]");
       }
       else
       {
         JsonArray root = resdoc.as<JsonArray>();
         String api = root[0].as<String>();
-        auto sendToFun = [root, &resStruct, &reqStruct]() {
+        auto sendToFun = [&]() {
           reqStruct.sendTo_name = resStruct.sendTo_name;
           serializeJson(root, reqStruct.str);
           if (xQueueSend(state.reqQueueHandle, &reqStruct, 0) != pdPASS)
@@ -324,7 +324,8 @@ void resTask(void* nullparam)
               ESP.restart();
             }
             else {
-              sendToDebug("resTask fsConfigObj->readFile error");
+              reqStruct.sendTo_name = std::get<3>(config.mcu_base);
+              reqStruct.str = "resTask fsConfigObj->readFile error";
             }
           }
           else if (api.indexOf("mcu_ybl") > -1)
@@ -346,7 +347,7 @@ void resTask(void* nullparam)
     }
     else
     {
-      sendToDebug("resTask xQueueReceive != pdPASS");
+      ESP_LOGD("resTask", "resTask xQueueReceive != pdPASS");
     }
   }
 }
@@ -458,8 +459,8 @@ void setup()
   // ESP_LOGV("ETBIG", "EGBIG_WSCLENT");
 
   yblnamespace::taskParam_t* yblTaskParam = new yblnamespace::taskParam_t{
-      .startCallBack = []() {xEventGroupSetBits(state.eg_Handle, EGBIG_YBL);},
-      .onMessageQueueHandle = state.reqQueueHandle
+      .onStart = []() {xEventGroupSetBits(state.eg_Handle, EGBIG_YBL);},
+      .onMessage = state.reqQueueHandle
   };
   xTaskCreate(yblnamespace::mainTask, "mcu_yblTask", 1024 * 6, (void*)yblTaskParam, state.taskindex++, NULL);
   xEventGroupWaitBits(state.eg_Handle, EGBIG_YBL, pdFALSE, pdTRUE, portMAX_DELAY);

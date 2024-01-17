@@ -503,6 +503,7 @@ namespace a7129namespace
     }
     namespace yblnamespace
     {
+        QueueHandle_t crcRxQueueHandle;
         Uint8 CRC16_High, CRC16_Low;
         Uint8 CRC16_LookupHigh[16] = {
             0x00, 0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70,
@@ -511,97 +512,6 @@ namespace a7129namespace
             0x00, 0x21, 0x42, 0x63, 0x84, 0xA5, 0xC6, 0xE7,
             0x08, 0x29, 0x4A, 0x6B, 0x8C, 0xAD, 0xCE, 0xEF };
         typedef Uint8 rx_buff_t[64];
-        typedef uint32_t id_t;
-        typedef Uint8 type_t;
-        typedef Uint8 state_t;
-        typedef struct
-        {
-            type_t type;
-            state_t state;
-        } idInfo_t;
-        typedef std::unordered_map<id_t, idInfo_t> idsInfo_t;
-        typedef std::tuple<String, idsInfo_t, int, int> config_t;
-        QueueHandle_t crcRxQueueHandle;
-        config_t config;
-        void config_set(JsonArray json) {
-            // JsonArray json = ref.to<JsonArray>();
-            JsonObject json1 = json[1].as<JsonObject>();
-            idsInfo_t idsInfo;
-            for (JsonPair pair : json1)
-            {
-                JsonObject v = pair.value().as<JsonObject>();
-                idInfo_t idinfo = {
-                    .type = v["type"].as<type_t>(),
-                    .state = v["state"].as<state_t>() };
-                std::string key_str = pair.key().c_str();
-                id_t id = static_cast<id_t>(std::stoul(key_str));
-                idsInfo.emplace(id, idinfo);
-            }
-            config = std::make_tuple(json[0].as<String>(), idsInfo, json[2].as<int>(), json[3].as<int>());
-        }
-        void config_get(JsonArray json) {
-            // JsonArray json = ref.to<JsonArray>();
-            json.add(std::get<0>(config));
-            idsInfo_t& idsInfo = std::get<1>(config);
-            JsonObject json_idsInfo = json.add<JsonObject>();
-            for (const auto& pair : idsInfo)
-            {
-                JsonObject json_yblidinfo = json_idsInfo[String(pair.first)].add<JsonObject>();
-                json_yblidinfo["type"] = pair.second.type;
-                json_yblidinfo["state"] = pair.second.state;
-            }
-            json.add(std::get<2>(config));
-            json.add(std::get<3>(config));
-            //ESP_LOGV("debug", "%s,%d,%d", std::get<0>(config).c_str(), std::get<2>(config), std::get<3>(config));
-        }
-        void send(id_t id, state_t state)
-        {
-            idsInfo_t& idsInfo = std::get<1>(config);
-            idInfo_t idInfo = idsInfo[id];
-            StrobeCMD(CMD_TX);
-            Uint8 db[8]; // 需要发送的数据
-            // id1  id2  state  else  else type
-            db[0] = id >> 24;
-            db[1] = (id >> 16) & 0xff;
-            db[2] = state;
-            db[3] = (id >> 8) & 0xff;
-            db[4] = id & 0xff;
-            db[5] = idInfo.type;
-            db[6] = 0xff;
-            InitRF();
-            A7129_WriteFIFO(db); // write data to TX FIFO
-            // StrobeCMD(CMD_STBY);
-            StrobeCMD(CMD_PLL);
-            StrobeCMD(CMD_RX); // 设置为接收模式
-        }
-        void api(JsonArray c)
-        {
-            //JsonArray c = ref.as<JsonArray>();
-            String api = c[0].as<String>();
-            if (api.indexOf(".config_set") > -1) {
-                c[0].set("mcu_ybl_set");
-                config_set(c[1].as<JsonArray>());
-            }
-            else if (api.indexOf(".config_get") > -1) {
-                c.clear();
-                c[0].set("mcu_ybl_set");
-                JsonObject db = c.add<JsonObject>();
-                JsonArray config = db["mcu_ybl"].add<JsonArray>();
-                config_get(config);
-            }
-            else if (api.indexOf(".config.idsInfo.clear") > -1)
-            {
-                std::get<1>(config).clear();
-                c.clear();
-                c[0].set("mcu_ybl_set");
-                JsonObject db = c.add<JsonObject>();
-                JsonArray config = db["mcu_ybl"].add<JsonArray>();
-                config_get(config);
-            }
-            else {
-                c[0].set(api + " api error");
-            }
-        }
         void CRC16_Init(void)
         {
             CRC16_High = 0x1D;
@@ -666,26 +576,127 @@ namespace a7129namespace
                 }
             }
         }
+        typedef uint32_t id_t;
+        typedef Uint8 type_t;
+        typedef Uint8 state_t;
         typedef struct
         {
-            std::function<void(void)> startCallBack;
-            QueueHandle_t onMessageQueueHandle;
+            type_t type;
+            state_t state;
+        } idInfo_t;
+        typedef std::unordered_map<id_t, idInfo_t> idsInfo_t;
+        typedef std::tuple<String, idsInfo_t, int, int> config_t;
+        config_t config;
+        void config_set(JsonArray json) {
+            // JsonArray json = ref.to<JsonArray>();
+            JsonObject json1 = json[1].as<JsonObject>();
+            idsInfo_t idsInfo;
+            for (JsonPair pair : json1)
+            {
+                JsonObject v = pair.value().as<JsonObject>();
+                idInfo_t idinfo = {
+                    .type = v["type"].as<type_t>(),
+                    .state = v["state"].as<state_t>() };
+                std::string key_str = pair.key().c_str();
+                id_t id = static_cast<id_t>(std::stoul(key_str));
+                idsInfo.emplace(id, idinfo);
+            }
+            config = std::make_tuple(json[0].as<String>(), idsInfo, json[2].as<int>(), json[3].as<int>());
+        }
+        void config_get(JsonArray json) {
+            json.add(std::get<0>(config));
+            idsInfo_t& idsInfo = std::get<1>(config);
+            JsonObject json_idsInfo = json.add<JsonObject>();
+            for (const auto& pair : idsInfo)
+            {
+                JsonObject v = json_idsInfo[String(pair.first)].to<JsonObject>();
+                v["type"] = pair.second.type;
+                v["state"] = pair.second.state;
+            }
+            json.add(std::get<2>(config));
+            json.add(std::get<3>(config));
+            //ESP_LOGV("debug", "%s,%d,%d", std::get<0>(config).c_str(), std::get<2>(config), std::get<3>(config));
+        }
+        void send(id_t id, state_t state)
+        {
+            idsInfo_t& idsInfo = std::get<1>(config);
+            idInfo_t idInfo = idsInfo[id];
+            StrobeCMD(CMD_TX);
+            Uint8 db[8]; // 需要发送的数据
+            // id1  id2  state  else  else type
+            db[0] = id >> 24;
+            db[1] = (id >> 16) & 0xff;
+            db[2] = state;
+            db[3] = (id >> 8) & 0xff;
+            db[4] = id & 0xff;
+            db[5] = idInfo.type;
+            db[6] = 0xff;
+            InitRF();
+            A7129_WriteFIFO(db); // write data to TX FIFO
+            // StrobeCMD(CMD_STBY);
+            StrobeCMD(CMD_PLL);
+            StrobeCMD(CMD_RX); // 设置为接收模式
+        }
+        void api(JsonArray c)
+        {
+            String api = c[0].as<String>();
+            c[0].set("mcu_ybl_set");
+            if (api.indexOf(".config_set") > -1) {
+                JsonObject db = c[1].as<JsonObject>();
+                JsonArray config = db["mcu_ybl"].as<JsonArray>();
+                config_set(config);
+            }
+            else if (api.indexOf(".config_get") > -1) {
+                JsonObject db = c.add<JsonObject>();
+                JsonArray config = db["mcu_ybl"].to<JsonArray>();
+                config_get(config);
+            }
+            else if (api.indexOf(".config.idsInfo.clear") > -1)
+            {
+                std::get<1>(config).clear();
+                JsonObject db = c.add<JsonObject>();
+                JsonArray config = db["mcu_ybl"].to<JsonArray>();
+                config_get(config);
+            }
+            else {
+                c[0].set(api + " api error");
+            }
+        }
+        void timerCallback(TimerHandle_t xTimer) {
+            QueueHandle_t onMessageQueueHandle = (QueueHandle_t)pvTimerGetTimerID(xTimer);
+            JsonDocument c0;
+            c0.add(".config_get");
+            JsonArray c1 = c0.as<JsonArray>();
+            api(c1);
+            String str;
+            serializeJson(c0, str);
+            myStruct_t obj = myStruct_t{
+                              .sendTo_name = std::get<0>(config),// std::get<0>(config),
+                              .str = str
+            };
+            if (xQueueSend(onMessageQueueHandle, &obj, 50) != pdPASS)
+                ESP_LOGV("debug", "Queue is full");
+        }
+        typedef struct
+        {
+            std::function<void(void)> onStart;
+            QueueHandle_t onMessage;
         } taskParam_t;
         void mainTask(void* ptr)
         {
             bool idadd = true;
             taskParam_t* param = (taskParam_t*)ptr;
-            String& sendTo_name = std::get<0>(config);
             idsInfo_t& idsInfo = std::get<1>(config);
-            int& pd_tick = std::get<2>(config);
             InitRF(); // init RF,最后一个字段0x8E,0x12,0x86
             pinMode(GIO1, INPUT_PULLUP);
             attachInterrupt(GIO1, CRC_Rx, FALLING); // 创建中断
             StrobeCMD(CMD_RX);                      // 设为接收模式
             rx_buff_t rx_buff;
             crcRxQueueHandle = xQueueCreate(5, sizeof(rx_buff));
-            TickType_t lastWakeTime = xTaskGetTickCount();
-            param->startCallBack();
+            TimerHandle_t yblTimer = xTimerCreate("yblTimer", pdMS_TO_TICKS(std::get<2>(config)), pdFALSE, param->onMessage, timerCallback);
+            TimerHandle_t yblTimer2 = xTimerCreate("yblTimer2", pdMS_TO_TICKS(std::get<3>(config)), pdTRUE, param->onMessage, timerCallback);
+            xTimerStart(yblTimer2, 0);
+            param->onStart();
             while (1)
             {
                 if (xQueueReceive(crcRxQueueHandle, &rx_buff, portMAX_DELAY) == pdPASS)
@@ -700,21 +711,7 @@ namespace a7129namespace
                         idsInfo[id_val] = {
                             .type = type_val,
                             .state = state_val };
-                        if (xTaskGetTickCount() - lastWakeTime >= pdMS_TO_TICKS(pd_tick)) {
-                            lastWakeTime = xTaskGetTickCount();
-                            JsonDocument c0;
-                            c0.add(".config_get");
-                            JsonArray c1=c0.as<JsonArray>();
-                            api(c1);
-                            String str;
-                            serializeJson(c0, str);
-                            myStruct_t obj = myStruct_t{
-                                              .sendTo_name = sendTo_name,// std::get<0>(config),
-                                              .str = str
-                            };
-                            if (xQueueSend(param->onMessageQueueHandle, &obj, 50) != pdPASS)
-                                ESP_LOGV("debug", "Queue is full");
-                        }
+                        xTimerStart(yblTimer, 0);
                     }
                 }
                 // ESP_LOGV("loop", "..........");
