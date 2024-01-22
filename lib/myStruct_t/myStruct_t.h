@@ -8,6 +8,8 @@ typedef struct
     String sendTo_name;
     String str;
 } myStruct_t;
+#include <stdio.h>
+#include <stdarg.h>
 
 // void concatAny(String& srcStr, const char* format, ...) {
 //     // 创建一个足够大的字符数组来存储格式化后的字符串

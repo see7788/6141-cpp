@@ -97,7 +97,7 @@ public:
         }
         return true;
     }
-    bool readFile(JsonVariant obj)
+    bool readFile(JsonObject obj)
     {
         JsonDocument doc;
         // ESP_LOGV("", " %i", doc.capacity());
@@ -108,7 +108,7 @@ public:
         }
         return c;
     }
-    bool writeFile(JsonVariant obj)
+    bool writeFile(JsonObject obj)
     {
         if (!this->file_bool)
         {

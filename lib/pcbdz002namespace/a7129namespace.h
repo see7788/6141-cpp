@@ -404,7 +404,6 @@ namespace a7129namespace
         A7129_WriteReg(MODE_REG, A7129Config[MODE_REG] | 0x0802); // IF Filter & VCO Current Calibration
         tmp = A7129_ReadReg(MODE_REG);
         // TEST_BUFF[2] = tmp;    //测试
-
         do
         {
             tmp = A7129_ReadReg(MODE_REG); // 等待时读0x00C2/0x08C2,直到0x00C0
@@ -419,7 +418,7 @@ namespace a7129namespace
         fbcf = (tmp >> 4) & 0x01;
         if (fbcf)
         {
-            ESP_LOGE("DEBUE", "fbcf", "");
+            ESP_LOGE("DEBUE", "fbcf");
         }
 
         // for check(VCO Current)
@@ -430,7 +429,7 @@ namespace a7129namespace
         //    TEST_BUFF[4] = vccf;        //测试
         if (vccf)
         {
-            ESP_LOGE("DEBUE", "vccf", "");
+            ESP_LOGE("DEBUE", "vccf");
         }
         // RSSI Calibration procedure @STB state
         A7129_WriteReg(ADC_REG, 0x4C00); // set ADC average=64
@@ -637,29 +636,30 @@ namespace a7129namespace
             StrobeCMD(CMD_PLL);
             StrobeCMD(CMD_RX); // 设置为接收模式
         }
-        void api(JsonArray c)
+        void api(JsonArray res)
         {
-            String api = c[0].as<String>();
-            c[0].set("mcu_ybl_set");
+            String api = res[0].as<String>();
+            JsonArray c;
+            res[0].set("mcu_ybl_set");
             if (api.indexOf(".config_set") > -1) {
-                JsonObject db = c[1].as<JsonObject>();
-                JsonArray config = db["mcu_ybl"].as<JsonArray>();
-                config_set(config);
+                JsonObject db = res[1].as<JsonObject>();
+                c = db["mcu_ybl"].as<JsonArray>();
+                config_set(c);
             }
             else if (api.indexOf(".config_get") > -1) {
-                JsonObject db = c.add<JsonObject>();
-                JsonArray config = db["mcu_ybl"].to<JsonArray>();
-                config_get(config);
+                JsonObject db = res.add<JsonObject>();
+                c = db["mcu_ybl"].to<JsonArray>();
+                config_get(c);
             }
             else if (api.indexOf(".config.idsInfo.clear") > -1)
             {
                 std::get<1>(config).clear();
-                JsonObject db = c.add<JsonObject>();
-                JsonArray config = db["mcu_ybl"].to<JsonArray>();
-                config_get(config);
+                JsonObject db = res.add<JsonObject>();
+                c = db["mcu_ybl"].to<JsonArray>();
+                config_get(c);
             }
             else {
-                c[0].set(api + " api error");
+                res[0].set(api + " api error");
             }
         }
         void timerCallback(TimerHandle_t xTimer) {
@@ -668,12 +668,11 @@ namespace a7129namespace
             c0.add(".config_get");
             JsonArray c1 = c0.as<JsonArray>();
             api(c1);
-            String str;
-            serializeJson(c0, str);
-            myStruct_t obj = myStruct_t{
+            myStruct_t obj{
                               .sendTo_name = std::get<0>(config),// std::get<0>(config),
-                              .str = str
+                              .str = ""
             };
+            serializeJson(c0, obj.str);
             if (xQueueSend(onMessageQueueHandle, &obj, 50) != pdPASS)
                 ESP_LOGV("debug", "Queue is full");
         }
