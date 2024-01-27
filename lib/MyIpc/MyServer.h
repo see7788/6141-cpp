@@ -57,7 +57,7 @@ public:
       { client->send("es hello!", NULL, millis(), 1000); });
     serverObj->addHandler(esObj);
   }
-  typedef std::tuple<String,String> wsConfig_t;
+  typedef std::tuple<String> wsConfig_t;
   void wsServerInit(wsConfig_t &c, std::function<void(const String&)> callback)
   {
     wsObj = new AsyncWebSocket(std::get<0>(c));
@@ -65,7 +65,7 @@ public:
       {
         if (type == WS_EVT_CONNECT)
         {
-          (*server).printfAll("[\"Hello Client :\", %u]", client->id());
+          server->printfAll("[\"Hello Client :\", %u]", client->id());
         }
         else if (type == WS_EVT_DATA)
         {

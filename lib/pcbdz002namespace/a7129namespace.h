@@ -28,7 +28,6 @@
 #define PIN_REG 0x0D
 #define CALIBRATION_REG 0x0E
 #define MODE_REG 0x0F
-
 #define TX1_PAGEA 0x00
 #define WOR1_PAGEA 0x01
 #define WOR2_PAGEA 0x02
@@ -587,7 +586,6 @@ namespace a7129namespace
         typedef std::tuple<String, idsInfo_t, int, int> config_t;
         config_t config;
         void config_set(JsonArray json) {
-            // JsonArray json = ref.to<JsonArray>();
             JsonObject json1 = json[1].as<JsonObject>();
             idsInfo_t idsInfo;
             for (JsonPair pair : json1)
@@ -663,18 +661,12 @@ namespace a7129namespace
             }
         }
         void timerCallback(TimerHandle_t xTimer) {
-            QueueHandle_t onMessageQueueHandle = (QueueHandle_t)pvTimerGetTimerID(xTimer);
-            JsonDocument c0;
-            c0.add(".config_get");
-            JsonArray c1 = c0.as<JsonArray>();
-            api(c1);
-            myStruct_t obj{
-                              .sendTo_name = std::get<0>(config),// std::get<0>(config),
-                              .str = ""
-            };
-            serializeJson(c0, obj.str);
-            if (xQueueSend(onMessageQueueHandle, &obj, 50) != pdPASS)
+            QueueHandle_t q = (QueueHandle_t)pvTimerGetTimerID(xTimer);
+            myStruct_t s;
+            strcpy(s, "[\"mcu_ybl.config_get\"]");
+            if (xQueueSend(q, &s, 0) != pdPASS) {
                 ESP_LOGV("debug", "Queue is full");
+            }
         }
         typedef struct
         {
