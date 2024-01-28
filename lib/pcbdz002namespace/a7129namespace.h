@@ -600,18 +600,18 @@ namespace a7129namespace
             }
             config = std::make_tuple(json[0].as<String>(), idsInfo, json[2].as<int>(), json[3].as<int>());
         }
-        void config_get(JsonArray json) {
-            json.add(std::get<0>(config));
+        void config_get(JsonArray res) {
+            res.add(std::get<0>(config));
             idsInfo_t& idsInfo = std::get<1>(config);
-            JsonObject json_idsInfo = json.add<JsonObject>();
+            JsonObject json_idsInfo = res.add<JsonObject>();
             for (const auto& pair : idsInfo)
             {
                 JsonObject v = json_idsInfo[String(pair.first)].to<JsonObject>();
                 v["type"] = pair.second.type;
                 v["state"] = pair.second.state;
             }
-            json.add(std::get<2>(config));
-            json.add(std::get<3>(config));
+            res.add(std::get<2>(config));
+            res.add(std::get<3>(config));
             //ESP_LOGV("debug", "%s,%d,%d", std::get<0>(config).c_str(), std::get<2>(config), std::get<3>(config));
         }
         void send(id_t id, state_t state)
@@ -647,7 +647,7 @@ namespace a7129namespace
             else if (api.indexOf(".config_get") > -1) {
                 JsonObject db = res.add<JsonObject>();
                 c = db["mcu_ybl"].to<JsonArray>();
-                config_get(c);
+               config_get(c);
             }
             else if (api.indexOf(".config.idsInfo.clear") > -1)
             {

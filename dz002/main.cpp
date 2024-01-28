@@ -154,16 +154,16 @@ void config_get(JsonObject obj)
   MyNet::sta_t mcu_net_sta = std::get<2>(config.mcu_net);
   json_net_sta.add(std::get<0>(mcu_net_sta));
   json_net_sta.add(std::get<1>(mcu_net_sta));
-  JsonArray json_ybl = obj["mcu_ybl"].add<JsonArray>();
+  JsonArray json_ybl = obj["mcu_ybl"].to<JsonArray>();
   yblnamespace::config_get(json_ybl);
-  JsonArray json_webPageServer = obj["mcu_webPageServer"].add<JsonArray>();
+  JsonArray json_webPageServer = obj["mcu_webPageServer"].to<JsonArray>();
   json_webPageServer.add(std::get<0>(config.mcu_webPageServer));
-  JsonArray json_esServer = obj["mcu_esServer"].add<JsonArray>();
+  JsonArray json_esServer = obj["mcu_esServer"].to<JsonArray>();
   json_esServer.add(std::get<0>(config.mcu_esServer));
-  JsonArray json_wsServer = obj["mcu_wsServer"].add<JsonArray>();
+  JsonArray json_wsServer = obj["mcu_wsServer"].to<JsonArray>();
   json_wsServer.add(std::get<0>(config.mcu_wsServer));
 }
-void configInit(void) {
+void configFromFile(void) {
   state.fsConfigObj = new MyFs("/config.json");
   if (!state.fsConfigObj->file_bool)
   {
@@ -178,21 +178,21 @@ void configInit(void) {
   }
   JsonDocument doc;
   state.fsConfigObj->readFile(doc);
-  serializeJson(doc, *(state.serialObj));
-  ESP_LOGV("DEBUG", "readFile");
+  // serializeJson(doc, *(state.serialObj));
+  // ESP_LOGV("DEBUG", "readFile");
   JsonObject obj = doc.as<JsonObject>();
-  serializeJson(doc, *(state.serialObj));
-  ESP_LOGV("DEBUG", "as<JsonObject>");
+  // serializeJson(doc, *(state.serialObj));
+  // ESP_LOGV("DEBUG", "as<JsonObject>");
   config_set(obj);
-  config_get(obj);
-  serializeJson(obj, *(state.serialObj));
-  ESP_LOGV("DEBUG", "config_get");
-  deserializeJson(doc, "[\"1\",\"2\",\"3\",\"4\"]");
-  serializeJson(doc, *(state.serialObj));
-  ESP_LOGV("DEBUG", "test");
-  deserializeJson(doc, "[\"5\",\"6\",\"7\",\"8\"]");
-  serializeJson(doc, *(state.serialObj));
-  ESP_LOGV("DEBUG", "test");
+  // config_get(obj);
+  // serializeJson(obj, *(state.serialObj));
+  // ESP_LOGV("DEBUG", "config_get");
+  // deserializeJson(doc, "[\"1\",\"2\",\"3\",\"4\"]");
+  // serializeJson(doc, *(state.serialObj));
+  // ESP_LOGV("DEBUG", "test");
+  // deserializeJson(doc, "[\"5\",\"6\",\"7\",\"8\"]");
+  // serializeJson(doc, *(state.serialObj));
+  // ESP_LOGV("DEBUG", "test");
   xEventGroupSetBits(state.egGroupHandle, EGBIG_FSCONFIG);
   ESP_LOGV("DEBUG", "EGBIG_FSCONFIG");
 }
@@ -430,10 +430,11 @@ void setup()
 {
   std::get<0>(config.mcu_serial) = 115200;
   state.egGroupHandle = xEventGroupCreate();
+
   serialInit();
   xEventGroupWaitBits(state.egGroupHandle, EGBIG_SERIAL, pdFALSE, pdTRUE, portMAX_DELAY);
 
-  configInit();
+  configFromFile();
   xEventGroupWaitBits(state.egGroupHandle, EGBIG_FSCONFIG, pdFALSE, pdTRUE, portMAX_DELAY);
 
   UBaseType_t taskIndex = 1;
@@ -447,6 +448,8 @@ void setup()
   uint32_t onTaskSize = 1024 * 8;
   uint32_t sendTaskSize = 1024 * 4;
   uint32_t configTaskSize = 1024 * 3;
+  state.configLock = xSemaphoreCreateMutex();
+  state.macId = String(ESP.getEfuseMac());
   // ESP_ERROR_CHECK(esp_task_wdt_init(20000, false)); // 初始化看门狗
   // ESP_ERROR_CHECK(esp_task_wdt_add(xTaskGetIdleTaskHandleForCPU(0)));
   // ESP_ERROR_CHECK(esp_task_wdt_add(xTaskGetIdleTaskHandleForCPU(1)));
@@ -457,17 +460,6 @@ void setup()
   ESP_ERROR_CHECK(esp_event_handler_register(ETH_EVENT, ESP_EVENT_ANY_ID, esp_eg_on, (void*)__func__));
   ESP_ERROR_CHECK(esp_event_handler_register(SC_EVENT, ESP_EVENT_ANY_ID, esp_eg_on, (void*)__func__));
 
-
-  state.configLock = xSemaphoreCreateMutex();
-  state.macId = String(ESP.getEfuseMac());
-
-  xTaskCreate(sendTask, "sendTask", sendTaskSize, NULL, sendTaskPriority, &state.sendTaskHandle);
-  xEventGroupWaitBits(state.egGroupHandle, EGBIG_SEND, pdFALSE, pdTRUE, portMAX_DELAY);
-
-
-  xTaskCreate(onTask, "onTask", onTaskSize, NULL, onTaskPriority, &state.onTaskHandle);
-  xEventGroupWaitBits(state.egGroupHandle, EGBIG_API, pdFALSE, pdTRUE, portMAX_DELAY);
-
   state.netObj = new MyNet(pcbdz002namespace::eth_begin, config.mcu_net);
   state.netObj->init();
   xEventGroupWaitBits(state.egGroupHandle, EGBIG_NET, pdFALSE, pdTRUE, portMAX_DELAY);
@@ -475,6 +467,12 @@ void setup()
   state.myServerObj = new MyServer(80);
   state.myServerObj->webPageServerInit(config.mcu_webPageServer);
   xEventGroupSetBits(state.egGroupHandle, EGBIG_WEBPAGE);
+
+  xTaskCreate(sendTask, "sendTask", sendTaskSize, NULL, sendTaskPriority, &state.sendTaskHandle);
+  xEventGroupWaitBits(state.egGroupHandle, EGBIG_SEND, pdFALSE, pdTRUE, portMAX_DELAY);
+
+  xTaskCreate(onTask, "onTask", onTaskSize, NULL, onTaskPriority, &state.onTaskHandle);
+  xEventGroupWaitBits(state.egGroupHandle, EGBIG_API, pdFALSE, pdTRUE, portMAX_DELAY);
   // state.myServerObj->arduinoOtaInit([](const String& message) -> void
   //   { ESP_LOGV("debug", "%s", message);
   // xEventGroupSetBits(state.egGroupHandle, EGBIG_OTA);
