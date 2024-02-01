@@ -8,7 +8,7 @@ typedef char myStruct_t[1024];
 // if (strncmp(str, "abc", 3) == 0) 判断起始字符
 // strcpy(str, strs.c_str())//安全赋值方式
 //snprintf(str, sizeof(str), "Number: %d, Float: %.2f, Flag: %s", num, fnum, flag ? "true" : "false");
-
+// sprintf(s, "%02x ", (uint8_t)data[i]);
 // #include <stdio.h>
 // typedef String myStructSendTo_t;
 // typedef String myStructStr_t;

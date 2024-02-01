@@ -14,16 +14,15 @@ namespace myClient {
   namespace ws {
     websockets::WebsocketsClient* obj;
     typedef std::tuple<String, String, String> config_t;
+    config_t config;
     typedef struct
     {
-      config_t config;
       std::function<void(bool)> onEvent;
       QueueHandle_t onMessage;
     } taskParam_t;
-    taskParam_t* op;
     void task(void* ptr)
     {
-      op = (taskParam_t*)ptr;
+      taskParam_t* op = (taskParam_t*)ptr;
       obj = new websockets::WebsocketsClient();
       obj->connect("39.97.216.195", 6014, "/");
       obj->onEvent([](websockets::WebsocketsEvent event, String data)
@@ -37,7 +36,7 @@ namespace myClient {
             // connect();
           }
         });
-      obj->onMessage([](websockets::WebsocketsMessage message)
+      obj->onMessage([op](websockets::WebsocketsMessage message)
         {
           myStruct_t s;
           const char* str = message.data().c_str();

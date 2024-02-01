@@ -2,14 +2,14 @@
 #define ARDUINOJSON_USE_LONG_LONG 1
 #define ARDUINOJSON_ENABLE_ARDUINO_STRING 1
 #define CORE_DEBUG_LEVEL 6
-#include <ESP.h>
-#include <esp_log.h>
-#include <esp_event.h>
-#include <esp_task_wdt.h>
 #include <tuple>
 #include <functional>
 #include <ArduinoWebsockets.h>
 #include <stdio.h>
+#include <ESP.h>
+#include <esp_log.h>
+#include <esp_event.h>
+#include <esp_task_wdt.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/semphr.h>
@@ -24,12 +24,12 @@
 #include <MyFs.h>
 #include <MyNet.h>
 #include <MyServer.h>
-#include <myClient.h>
-// #include <myBlenamespace.h>
-// #include <HardwareSerial.h>//硬串口,Software Serial软串口
+#include <ArduinoWebsockets.h>
+#include <esp_websocket_client.h>
+#include <mqtt_client.h>
 #define EGBIG_FSCONFIG (1 << 0)
 #define EGBIG_SEND (1 << 1)
-#define EGBIG_API (1 << 2)
+#define EGBIG_ON (1 << 2)
 #define EGBIG_NET (1 << 3)
 #define EGBIG_WSCLENT (1 << 5)
 #define EGBIG_YBL (1 << 6)
@@ -38,17 +38,19 @@
 #define EGBIG_WEBPAGE (1 << 9)
 #define EGBIG_ESSERVER (1 << 10)
 #define EGBIG_OTA (1 << 11)
+//define默认10进制；16进制值用0x或者0X开始，2进展用0b或OB开始
+// #include <myBlenamespace.h>
+// #include <HardwareSerial.h>//硬串口,Software Serial软串口
 namespace yblnamespace = pcbdz002namespace::yblnamespace;
-namespace wsClientmespace = myClient::ws;
 typedef struct
 {
   std::tuple<String, String, String> mcu_base;
+  std::tuple<String, String, String> mcu_wsClient;
   std::tuple<int, String> mcu_serial;
   MyNet::config_t mcu_net;
   MyServer::webPageConfig_t mcu_webPageServer;
   MyServer::wsConfig_t mcu_wsServer;
   MyServer::esConfig_t mcu_esServer;
-  wsClientmespace::config_t mcu_wsClient;
 } config_t;
 config_t config;
 typedef struct
@@ -59,8 +61,14 @@ typedef struct
   QueueHandle_t onTaskQueueHandle;
   QueueHandle_t sendTaskQueueHandle;
   TaskHandle_t sendTaskHandle;
+  uint32_t sendTaskSize;
+  UBaseType_t sendTaskPriority;
   TaskHandle_t onTaskHandle;
+  UBaseType_t onTaskPriority;
+  uint32_t onTaskSize;
   TaskHandle_t yblTaskHandle;
+  UBaseType_t yblTaskSize;
+  UBaseType_t yblTaskPriority;
   TaskHandle_t wsTaskHandle;
   TaskHandle_t configTaskHandle;
   MyFs* fsConfigObj;
@@ -68,6 +76,7 @@ typedef struct
   MyNet* netObj;
   HardwareSerial* serialObj;
   MyServer* myServerObj;
+  websockets::WebsocketsClient* wsClientObj;
 } state_t;
 state_t state;
 void esp_eg_on(void* registEr, esp_event_base_t postEr, int32_t eventId, void* eventData)
@@ -79,7 +88,7 @@ void esp_eg_on(void* registEr, esp_event_base_t postEr, int32_t eventId, void* e
   if (postEr == IP_EVENT && (eventId == 4 || eventId == 0))
   {
     xEventGroupSetBits(state.egGroupHandle, EGBIG_NET);
-    ESP_LOGV("DEBUG", "EGBIG_NET");
+    ESP_LOGV("DEBUG", "EGBIG_NET SetBits");
     use = 1;
   }
   /* EventBits_t eventBits =xEventGroupWaitBits(state.egGroupHandle, EGBIG_FSCONFIGSUCCESS, pdTRUE, pdTRUE, portMAX_DELAY);
@@ -90,7 +99,7 @@ void esp_eg_on(void* registEr, esp_event_base_t postEr, int32_t eventId, void* e
   // if ((xEventGroupGetBits(state.egGroupHandle) & EGBIG_NET) != 0)
   // char *data = eventData ? ((char *)eventData) : ((char *)"");
   //,eventData:%s   (char *)eventData
-  ESP_LOGV("esp_eg_on", "registEr:%s,use:%d,postEr:%s, eventId:%d", er, use, postEr, eventId);
+  ESP_LOGV("DEBUG", "registEr:%s,use:%d,postEr:%s, eventId:%d", er, use, postEr, eventId);
 }
 void config_set(JsonObject obj)
 {
@@ -194,155 +203,113 @@ void configFromFile(void) {
   // serializeJson(doc, *(state.serialObj));
   // ESP_LOGV("DEBUG", "test");
   xEventGroupSetBits(state.egGroupHandle, EGBIG_FSCONFIG);
-  ESP_LOGV("DEBUG", "EGBIG_FSCONFIG");
-}
-void serialInit(void) {
-  Serial.setTimeout(50);
-  Serial.setRxBufferSize(1024);
-  Serial.setTxBufferSize(1024);
-  state.serialObj = &Serial;
-  state.serialObj->begin(std::get<0>(config.mcu_serial));
-  state.serialObj->onReceive([]()
-    {
-      while (state.serialObj->available()) {
-        myStruct_t s;
-        const char* str = state.serialObj->readStringUntil('\n').c_str();
-        strncpy(s, str, sizeof(s) - 1);
-        s[sizeof(s) - 1] = '\0';
-        if (xQueueSend(state.onTaskQueueHandle, &s, 0) != pdPASS) {
-          ESP_LOGD("onReceive", "onTaskQueueHandle is full");
-        };
-        vTaskDelay(50);
-      }
-    });
-  xEventGroupSetBits(state.egGroupHandle, EGBIG_SERIAL);
-  ESP_LOGV("DEBUG", "EGBIG_SERIAL");
+  ESP_LOGV("DEBUG", "EGBIG_FSCONFIG SetBits");
 }
 //if (xSemaphoreTake(state.configLock, portMAX_DELAY) == pdTRUE)
 // xSemaphoreGive(state.configLock);
-void onTask(void* nullparam)
-{
-  state.onTaskQueueHandle = xQueueCreate(10, sizeof(myStruct_t));
-  if (!state.onTaskQueueHandle) {
-    ESP_LOGE("DEBUG", "%s", "!state.onTaskQueueHandle");
-    vTaskDelete(NULL);
+void onFun(myStruct_t& s) {
+  JsonDocument doc;
+  DeserializationError error = deserializeJson(doc, s);//, DeserializationOption::NestingLimit(5));
+  if (error)
+  {
+    doc.clear();
+    doc["error"].set("onTask deserializeJson error");
+    doc["str"].set(s);
+    doc["error.c_str()"].set(error.c_str());
+    doc["error.code()"].set(error.code());
   }
   else {
-    xEventGroupSetBits(state.egGroupHandle, EGBIG_API);
-    ESP_LOGV("DEBUG", "EGBIG_API");
-  }
-  myStruct_t s;
-  for (;;)
-  {
-    if (xQueueReceive(state.onTaskQueueHandle, &s, pdMS_TO_TICKS(5000)) == pdPASS)
+    String api = doc[0].as<String>();
+    JsonObject db;
+    if (api == "mcu_state_get")
     {
-      JsonDocument doc;
-      DeserializationError error = deserializeJson(doc, s);//, DeserializationOption::NestingLimit(5));
-      if (error)
+      doc.clear();
+      doc[0].set("set");
+      db = doc.add<JsonObject>();
+      config_get(db);
+      JsonArray mcu_state = db["mcu_state"].to<JsonArray>();
+      uint32_t ulBits = xEventGroupGetBits(state.egGroupHandle); // 获取 Event Group 变量当前值
+      mcu_state.add(state.macId);
+      JsonArray egBit = mcu_state.add<JsonArray>();
+      for (int i = sizeof(ulBits) * 8 - 1; i >= 0; i--)
+      {
+        uint32_t mask = 1 << i;
+        egBit.add(!!(ulBits & mask));
+      }
+      mcu_state.add(ETH.localIP());
+      mcu_state.add(WiFi.localIP());
+    }
+    else if (api == "i18n_get") {
+      doc.clear();
+      doc[0].set("set");
+      db = doc.add<JsonObject>();
+      if (!state.fsI18nObj->readFile(db))
       {
         doc.clear();
-        doc["error"].set("onTask deserializeJson error");
-        doc["str"].set(s);
-        doc["error.c_str()"].set(error.c_str());
-        doc["error.code()"].set(error.code());
-      }
-      else {
-        String api = doc[0].as<String>();
-        JsonObject db;
-        if (api == "mcu_state_get")
-        {
-          doc.clear();
-          doc[0].set("set");
-          db = doc.add<JsonObject>();
-          config_get(db);
-          JsonArray mcu_state = db["mcu_state"].to<JsonArray>();
-          uint32_t ulBits = xEventGroupGetBits(state.egGroupHandle); // 获取 Event Group 变量当前值
-          mcu_state.add(state.macId);
-          JsonArray egBit = mcu_state.add<JsonArray>();
-          for (int i = sizeof(ulBits) * 8 - 1; i >= 0; i--)
-          {
-            uint32_t mask = 1 << i;
-            egBit.add(!!(ulBits & mask));
-          }
-          mcu_state.add(ETH.localIP());
-          mcu_state.add(WiFi.localIP());
-        }
-        else if (api == "i18n_get") {
-          doc.clear();
-          doc[0].set("set");
-          db = doc.add<JsonObject>();
-          if (!state.fsI18nObj->readFile(db))
-          {
-            doc.clear();
-            api.concat("onTask fsI18nObj->readFile error");
-            doc.add(api);
-          }
-        }
-        else if (api == "i18n_set") {
-          doc[0].set("set");
-          db = doc[1].as<JsonObject>();
-          if (!state.fsI18nObj->writeFile(db)) {
-            doc.clear();
-            api.concat("onTask fsI18nObj->writeFile error");
-            doc.add(api);
-          }
-        }
-        else if (api == "config_set")
-        {
-          db = doc[1].as<JsonObject>();
-          config_set(db);
-        }
-        else if (api == "config_get")
-        {
-          doc.clear();
-          doc[0].set("config_set");
-          db = doc.add<JsonObject>();
-          config_get(db);
-        }
-        else if (api == "config_toFile")
-        {
-          doc.clear();
-          doc[0].set("config_set");
-          db = doc.add<JsonObject>();
-          config_get(db);
-          bool success = state.fsConfigObj->writeFile(db);
-          if (!success) {
-            doc.clear();
-            api.concat("onTask fsConfigObj->writeFile error");
-            doc.add(api);
-          }
-        }
-        else if (api == "config_fromFile")
-        {
-          doc[0].set("config_set");
-          db = doc.add<JsonObject>();
-          bool success = state.fsConfigObj->readFile(db);
-          if (!success) {
-            doc.clear();
-            api.concat("onTask fsConfigObj->readFile error");
-            doc.add(api);
-          }
-        }
-        else if (api == "mcuRestart") {
-          ESP.restart();
-        }
-        else if (api.indexOf("mcu_ybl") > -1)
-        {
-          JsonArray arr = doc.as<JsonArray>();
-          yblnamespace::api(arr);
-        }
-        else
-        {
-          api.concat("onTask api error");
-          doc[0].set(api);
-        }
-      }
-      serializeJson(doc, s);
-      if (xQueueSend(state.sendTaskQueueHandle, &s, 50) != pdPASS) {
-        ESP_LOGD("sendTask", "sendTaskQueueHandle is full");
+        api.concat("onTask fsI18nObj->readFile error");
+        doc.add(api);
       }
     }
+    else if (api == "i18n_set") {
+      doc[0].set("set");
+      db = doc[1].as<JsonObject>();
+      if (!state.fsI18nObj->writeFile(db)) {
+        doc.clear();
+        api.concat("onTask fsI18nObj->writeFile error");
+        doc.add(api);
+      }
+    }
+    else if (api == "config_set")
+    {
+      db = doc[1].as<JsonObject>();
+      config_set(db);
+    }
+    else if (api == "config_get")
+    {
+      doc.clear();
+      doc[0].set("config_set");
+      db = doc.add<JsonObject>();
+      config_get(db);
+    }
+    else if (api == "config_toFile")
+    {
+      doc.clear();
+      doc[0].set("config_set");
+      db = doc.add<JsonObject>();
+      config_get(db);
+      bool success = state.fsConfigObj->writeFile(db);
+      if (!success) {
+        doc.clear();
+        api.concat("onTask fsConfigObj->writeFile error");
+        doc.add(api);
+      }
+    }
+    else if (api == "config_fromFile")
+    {
+      doc[0].set("config_set");
+      db = doc.add<JsonObject>();
+      bool success = state.fsConfigObj->readFile(db);
+      if (!success) {
+        doc.clear();
+        api.concat("onTask fsConfigObj->readFile error");
+        doc.add(api);
+      }
+    }
+    else if (api == "mcuRestart") {
+      ESP.restart();
+    }
+    else if (api.indexOf("mcu_ybl") > -1)
+    {
+      JsonArray arr = doc.as<JsonArray>();
+      yblnamespace::api(arr);
+    }
+    else
+    {
+      api.concat("onTask api error");
+      doc[0].set(api);
+    }
   }
+  serializeJson(doc, s);
 }
 void sendTask(void* nullparam) {
   state.sendTaskQueueHandle = xQueueCreate(10, sizeof(myStruct_t));
@@ -352,104 +319,170 @@ void sendTask(void* nullparam) {
   }
   else {
     xEventGroupSetBits(state.egGroupHandle, EGBIG_SEND);
-    ESP_LOGV("DEBUG", "EGBIG_SEND");
+    ESP_LOGV("DEBUG", "EGBIG_SEND SetBits");
+  }
+  String* sendTo = &std::get<0>(config.mcu_base);
+  if ((*sendTo).isEmpty()) {
+    *sendTo = "mcu_serial";
   }
   myStruct_t s;
   for (;;)
   {
     if (xQueueReceive(state.sendTaskQueueHandle, &s, portMAX_DELAY) == pdPASS)
     {
-      String sendTo = std::get<0>(config.mcu_base);
-      if (sendTo.isEmpty()) {
-        std::get<0>(config.mcu_base) = "mcu_serial";
-      }
-      if (sendTo == "mcu_wsClient") {
-        if (wsClientmespace::obj == nullptr) {
-          // myClient::WsClient::param_t* wsTaskParam = new myClient::WsClient::param_t{
-          //      .config = config.mcu_wsClient,
-          //      .onEvent = [](bool c) {
-          //       c ? xEventGroupSetBits(state.egGroupHandle, EGBIG_WSCLENT) : xEventGroupClearBits(state.egGroupHandle, EGBIG_WSCLENT);
-          //        },
-          //       .onMessage = [](String s)->void {
-          //         if (xQueueSend(state.onTaskQueueHandle, &s, 50) != pdPASS)
-          //           ESP_LOGV("debug", "onTaskQueueHandle is full"); } };
-          // state.wsClientObj = new myClient::WsClient(wsTaskParam);
-          // xTaskCreate(myClient::wsTask, "wsClientTask", 1024 * 3, (void*)state.wsClientObj, 6, &state.wsTaskHandle);
-          // xEventGroupWaitBits(state.egGroupHandle, EGBIG_WSCLENT, pdFALSE, pdTRUE, portMAX_DELAY);
+      sendTo = &std::get<0>(config.mcu_base);
+      if (*sendTo == "mcu_wsClient") {
+        if (state.wsClientObj == nullptr) {
+          state.wsClientObj = new websockets::WebsocketsClient();
+          state.wsClientObj->connect("39.97.216.195", 6014, "/");
+          state.wsClientObj->onEvent([](websockets::WebsocketsEvent event, String data)
+            {
+              if (event == websockets::WebsocketsEvent::ConnectionOpened)
+              {
+                xEventGroupSetBits(state.egGroupHandle, EGBIG_WSCLENT);
+                state.wsClientObj->send("EGBIG_WSCLENT SetBits");
+              }
+              else if (event == websockets::WebsocketsEvent::ConnectionClosed)
+              {
+                xEventGroupClearBits(state.egGroupHandle, EGBIG_WSCLENT);
+                state.wsClientObj->send("EGBIG_WSCLENT ClearBits");
+              }
+            });
+          state.wsClientObj->onMessage([](websockets::WebsocketsMessage message)
+            {
+              myStruct_t s;
+              const char* str = message.data().c_str();
+              strncpy(s, str, sizeof(s) - 1);
+              s[sizeof(s) - 1] = '\0';
+              if (xQueueSend(state.onTaskQueueHandle, &s, 0) != pdPASS) {
+                state.wsClientObj->send("onTaskQueueHandle is full");
+              }
+            });
         }
-        if (!(xEventGroupGetBits(state.egGroupHandle) & EGBIG_WSCLENT)) {
-
-        }
-        wsClientmespace::obj->send(s);
+        state.wsClientObj->send(s);
       }
-      else if (sendTo == "mcu_wsServer") {
+      else if (*sendTo == "mcu_wsServer") {
         if (state.myServerObj->wsObj == nullptr) {
-          // state.myServerObj->wsServerInit(config.mcu_wsServer, [](const String& str) -> void
-          //     {
-          //       myStruct_t s{
-          //              .sendTo = std::get<1>(config.mcu_wsServer),
-          //              .str = str
-          //       };
-          //       if (xQueueSend(state.onTaskQueueHandle, &s, 0) != pdPASS)
-          //         ESP_LOGV("debug", "onTaskQueueHandle is full"); });
-          //   xEventGroupSetBits(state.egGroupHandle, EGBIG_WSSERVER);
+          state.myServerObj->wsServerInit(config.mcu_wsServer, state.onTaskQueueHandle);
+          auto loop = []() {
+            state.myServerObj->wsObj->cleanupClients();
+            };
+          xEventGroupSetBits(state.egGroupHandle, EGBIG_WSSERVER);
+          state.myServerObj->wsObj->textAll("EGBIG_WSSERVER SetBits");
         }
-        else if (!(xEventGroupGetBits(state.egGroupHandle) & EGBIG_WSSERVER)) {
-
-        }
-        else {
-          state.myServerObj->wsObj->textAll(s);
-        }
-
+        state.myServerObj->wsObj->textAll(s);
       }
-      else if (sendTo == "mcu_esServer") {
+      else if (*sendTo == "mcu_esServer") {
         if (state.myServerObj->esObj == nullptr) {
           state.myServerObj->esServerInit(config.mcu_esServer);
           xEventGroupSetBits(state.egGroupHandle, EGBIG_ESSERVER);
+          state.myServerObj->esObj->send("EGBIG_ESSERVER SetBits");
         }
-        else if (!(xEventGroupGetBits(state.egGroupHandle) & EGBIG_ESSERVER)) {
+        state.myServerObj->esObj->send(s);
+      }
+      else if (*sendTo == "mcu_mqttClient") {
 
-        }
-        else {
-          state.myServerObj->esObj->send(s);
-        }
+      }
+      else if (*sendTo == "mcu_https") {
+
+      }
+      else if (*sendTo == "mcu_ble") {
+
+      }
+      else if (*sendTo == "mcu_udp") {
+
       }
       else {
-        if (!(xEventGroupGetBits(state.egGroupHandle) & EGBIG_SERIAL)) {
-          serialInit();
+        if (state.serialObj == nullptr) {
+          state.serialObj = &Serial;
+          state.serialObj->setTimeout(50);
+          state.serialObj->begin(std::get<0>(config.mcu_serial));
+          state.serialObj->onReceive([]()
+            {
+              while (state.serialObj->available()) {
+                myStruct_t s;
+                const char* str = state.serialObj->readStringUntil('\n').c_str();
+                strncpy(s, str, sizeof(s) - 1);
+                s[sizeof(s) - 1] = '\0';
+                if (xQueueSend(state.onTaskQueueHandle, &s, 0) != pdPASS) {
+                  state.serialObj->println("onTaskQueueHandle is full");
+                };
+                vTaskDelay(50);
+              }
+            });
+          xEventGroupSetBits(state.egGroupHandle, EGBIG_SERIAL);
+          state.serialObj->println("EGBIG_SERIAL SetBits");
         }
-        else {
-          state.serialObj->println(s);
-          state.serialObj->flush();
-        }
+        state.serialObj->println(s);
+        state.serialObj->flush();
+      }
+    }
+  }
+}
+void onTask(void* nullparam)
+{
+  state.onTaskQueueHandle = xQueueCreate(10, sizeof(myStruct_t));
+  if (!state.onTaskQueueHandle) {
+    ESP_LOGE("DEBUG", "%s", "!state.onTaskQueueHandle");
+    vTaskDelete(NULL);
+  }
+  else {
+    xEventGroupSetBits(state.egGroupHandle, EGBIG_ON);
+    ESP_LOGV("DEBUG", "EGBIG_ON SetBits");
+  }
+  state.netObj = new MyNet(pcbdz002namespace::eth_begin, config.mcu_net);
+  state.netObj->init();
+  xEventGroupWaitBits(state.egGroupHandle, EGBIG_NET, pdFALSE, pdTRUE, portMAX_DELAY);
+
+  state.myServerObj = new MyServer(80);
+  state.myServerObj->webPageServerInit(config.mcu_webPageServer);
+  xEventGroupSetBits(state.egGroupHandle, EGBIG_WEBPAGE);
+
+  xTaskCreate(sendTask, "sendTask", state.sendTaskSize, NULL, state.sendTaskPriority, &state.sendTaskHandle);
+  xEventGroupWaitBits(state.egGroupHandle, EGBIG_SEND, pdFALSE, pdTRUE, portMAX_DELAY);
+
+  yblnamespace::taskParam_t* yblTaskParam = new yblnamespace::taskParam_t{
+      .onStart = []() {
+        xEventGroupSetBits(state.egGroupHandle, EGBIG_YBL);
+        ESP_LOGV("DEBUG", "EGBIG_YBL SetBits");
+        },
+      .onMessage = state.onTaskQueueHandle
+  };
+  xTaskCreate(yblnamespace::mainTask, "mcu_yblTask", state.yblTaskSize, (void*)yblTaskParam, state.yblTaskPriority, &state.yblTaskHandle);
+  xEventGroupWaitBits(state.egGroupHandle, EGBIG_YBL, pdFALSE, pdTRUE, portMAX_DELAY);
+
+  myStruct_t s = "TEST SEND";
+  xQueueSend(state.sendTaskQueueHandle, &s, 50);
+  for (;;)
+  {
+    if (xQueueReceive(state.onTaskQueueHandle, &s, portMAX_DELAY) == pdPASS)
+    {
+      onFun(s);
+      if (xQueueSend(state.sendTaskQueueHandle, &s, 50) != pdPASS) {
+        ESP_LOGD("sendTask", "sendTaskQueueHandle is full");
       }
     }
   }
 }
 void setup()
 {
-  std::get<0>(config.mcu_serial) = 115200;
+  Serial.setRxBufferSize(1024);
+  Serial.setTxBufferSize(1024);
+  Serial.begin(115200);
   state.egGroupHandle = xEventGroupCreate();
-
-  serialInit();
-  xEventGroupWaitBits(state.egGroupHandle, EGBIG_SERIAL, pdFALSE, pdTRUE, portMAX_DELAY);
-
+  // state.configLock = xSemaphoreCreateMutex();
+  UBaseType_t taskIndex = uxTaskPriorityGet(xTaskGetCurrentTaskHandle());
+  taskIndex++;
+  state.sendTaskPriority = taskIndex++;
+  state.onTaskPriority = taskIndex++;
+  state.yblTaskPriority = taskIndex++;
+  state.yblTaskSize = 1024 * 4;
+  state.onTaskSize = 1024 * 6;
+  state.sendTaskSize = 1024 * 4;
+  state.macId = String(ESP.getEfuseMac());
   configFromFile();
   xEventGroupWaitBits(state.egGroupHandle, EGBIG_FSCONFIG, pdFALSE, pdTRUE, portMAX_DELAY);
 
-  UBaseType_t taskIndex = 1;
-  UBaseType_t sendTaskPriority = taskIndex++;
-  UBaseType_t onTaskPriority = taskIndex++;
-  UBaseType_t wsTaskPriority = taskIndex++;
-  UBaseType_t yblTaskPriority = taskIndex++;
-  UBaseType_t configTaskPriority = taskIndex++;
-  uint32_t yblTaskSize = 1024 * 4;
-  uint32_t wsTaskSize = 1024 * 3;
-  uint32_t onTaskSize = 1024 * 8;
-  uint32_t sendTaskSize = 1024 * 4;
-  uint32_t configTaskSize = 1024 * 3;
-  state.configLock = xSemaphoreCreateMutex();
-  state.macId = String(ESP.getEfuseMac());
   // ESP_ERROR_CHECK(esp_task_wdt_init(20000, false)); // 初始化看门狗
   // ESP_ERROR_CHECK(esp_task_wdt_add(xTaskGetIdleTaskHandleForCPU(0)));
   // ESP_ERROR_CHECK(esp_task_wdt_add(xTaskGetIdleTaskHandleForCPU(1)));
@@ -460,62 +493,27 @@ void setup()
   ESP_ERROR_CHECK(esp_event_handler_register(ETH_EVENT, ESP_EVENT_ANY_ID, esp_eg_on, (void*)__func__));
   ESP_ERROR_CHECK(esp_event_handler_register(SC_EVENT, ESP_EVENT_ANY_ID, esp_eg_on, (void*)__func__));
 
-  state.netObj = new MyNet(pcbdz002namespace::eth_begin, config.mcu_net);
-  state.netObj->init();
-  xEventGroupWaitBits(state.egGroupHandle, EGBIG_NET, pdFALSE, pdTRUE, portMAX_DELAY);
-
-  state.myServerObj = new MyServer(80);
-  state.myServerObj->webPageServerInit(config.mcu_webPageServer);
-  xEventGroupSetBits(state.egGroupHandle, EGBIG_WEBPAGE);
-
-  xTaskCreate(sendTask, "sendTask", sendTaskSize, NULL, sendTaskPriority, &state.sendTaskHandle);
-  xEventGroupWaitBits(state.egGroupHandle, EGBIG_SEND, pdFALSE, pdTRUE, portMAX_DELAY);
-
-  xTaskCreate(onTask, "onTask", onTaskSize, NULL, onTaskPriority, &state.onTaskHandle);
-  xEventGroupWaitBits(state.egGroupHandle, EGBIG_API, pdFALSE, pdTRUE, portMAX_DELAY);
+  xTaskCreate(onTask, "onTask", state.onTaskSize, NULL, state.onTaskPriority, &state.onTaskHandle);
+  xEventGroupWaitBits(state.egGroupHandle, EGBIG_ON, pdFALSE, pdTRUE, portMAX_DELAY);
   // state.myServerObj->arduinoOtaInit([](const String& message) -> void
   //   { ESP_LOGV("debug", "%s", message);
   // xEventGroupSetBits(state.egGroupHandle, EGBIG_OTA);
   //   });
-
-  yblnamespace::taskParam_t* yblTaskParam = new yblnamespace::taskParam_t{
-      .onStart = []() {
-        xEventGroupSetBits(state.egGroupHandle, EGBIG_YBL);
-        ESP_LOGV("DEBUG", "EGBIG_YBL");
-        },
-      .onMessage = state.onTaskQueueHandle
-  };
-  xTaskCreate(yblnamespace::mainTask, "mcu_yblTask", yblTaskSize, (void*)yblTaskParam, yblTaskPriority, &state.yblTaskHandle);
-  xEventGroupWaitBits(state.egGroupHandle, EGBIG_YBL, pdFALSE, pdTRUE, portMAX_DELAY);
   vTaskDelete(NULL);
 }
 
 void loop(void)
 {
-  int heapSize = ESP.getHeapSize();
-  int freeHeap = ESP.getFreeHeap();
-  printf("(heapSize-%d,freeHeap-%d,use-%d);", heapSize, freeHeap, heapSize - freeHeap);
-  int onSize = uxTaskGetStackHighWaterMark(state.onTaskHandle);//最高水位线
-  // printf("(onSize-%d, Used-%d);", onSize, onTaskSize - onSize);
-  // printf("(sendSize-%d, Used-%d);", sendSize, sendTaskSize - sendSize);
-  // int yblSize = uxTaskGetStackHighWaterMark(state.yblTaskHandle);
-  // printf("(yblSize-%d, Used-%d)\n", yblSize, yblTaskSize - yblSize);
+  //uxTaskGetStackHighWaterMark剩余可用
+  printf("heapSize-%d,freeHeap-%d\n", ESP.getHeapSize(), ESP.getFreeHeap());
 
+  printf("main Priority-%u,WaterMark-%u;\n", uxTaskPriorityGet(NULL), uxTaskGetStackHighWaterMark(NULL));
 
+  printf("send Priority-%u,WaterMark-%u, setting-%u;\n", state.sendTaskPriority, uxTaskGetStackHighWaterMark(state.sendTaskHandle), state.sendTaskSize);
+  
+  printf("on Priority-%u,WaterMark-%u, setting-%u;\n", state.onTaskPriority, uxTaskGetStackHighWaterMark(state.onTaskHandle), state.onTaskSize);
 
-  //获取当前任务的堆栈使用情况
-  UBaseType_t stackSize = uxTaskGetStackHighWaterMark(NULL);
+  printf("ybl Priority-%u,WaterMark-%u, setting-%u;\n\n\n", state.yblTaskPriority, uxTaskGetStackHighWaterMark(state.yblTaskHandle), state.yblTaskSize);
 
-  // 获取当前任务的堆栈大小
-  UBaseType_t totalStackSize = configMINIMAL_STACK_SIZE * sizeof(StackType_t);
-
-  // 计算当前任务实际使用的堆栈大小
-  UBaseType_t usedStackSize = totalStackSize - stackSize;
-
-  //获取当前任务等级
-  TaskHandle_t currentTaskHandle = xTaskGetCurrentTaskHandle();
-  UBaseType_t currentTaskPriority = uxTaskPriorityGet(currentTaskHandle);
-  // 打印当前任务的堆栈使用情况
-  ESP_LOGV("TAG", "taskPriority%u,stackSize%u,totalStackSize%u,usedStackSize%u", currentTaskPriority, stackSize, totalStackSize, usedStackSize);
   vTaskDelay(2000);
 }

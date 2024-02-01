@@ -583,10 +583,10 @@ namespace a7129namespace
             state_t state;
         } idInfo_t;
         typedef std::unordered_map<id_t, idInfo_t> idsInfo_t;
-        typedef std::tuple<String, idsInfo_t, int, int> config_t;
+        typedef std::tuple<idsInfo_t, int, int> config_t;
         config_t config;
         void config_set(JsonArray json) {
-            JsonObject json1 = json[1].as<JsonObject>();
+            JsonObject json1 = json[0].as<JsonObject>();
             idsInfo_t idsInfo;
             for (JsonPair pair : json1)
             {
@@ -598,11 +598,10 @@ namespace a7129namespace
                 id_t id = static_cast<id_t>(std::stoul(key_str));
                 idsInfo.emplace(id, idinfo);
             }
-            config = std::make_tuple(json[0].as<String>(), idsInfo, json[2].as<int>(), json[3].as<int>());
+            config = std::make_tuple(idsInfo, json[1].as<int>(), json[2].as<int>());
         }
         void config_get(JsonArray res) {
-            res.add(std::get<0>(config));
-            idsInfo_t& idsInfo = std::get<1>(config);
+            idsInfo_t& idsInfo = std::get<0>(config);
             JsonObject json_idsInfo = res.add<JsonObject>();
             for (const auto& pair : idsInfo)
             {
@@ -610,13 +609,14 @@ namespace a7129namespace
                 v["type"] = pair.second.type;
                 v["state"] = pair.second.state;
             }
+            res.add(std::get<1>(config));
             res.add(std::get<2>(config));
-            res.add(std::get<3>(config));
+            // serializeJson(res,Serial);
             //ESP_LOGV("debug", "%s,%d,%d", std::get<0>(config).c_str(), std::get<2>(config), std::get<3>(config));
         }
         void send(id_t id, state_t state)
         {
-            idsInfo_t& idsInfo = std::get<1>(config);
+            idsInfo_t& idsInfo = std::get<0>(config);
             idInfo_t idInfo = idsInfo[id];
             StrobeCMD(CMD_TX);
             Uint8 db[8]; // 需要发送的数据
@@ -638,7 +638,7 @@ namespace a7129namespace
         {
             String api = res[0].as<String>();
             JsonArray c;
-            res[0].set("mcu_ybl_set");
+            res[0].set("mcu_ybl.set");
             if (api.indexOf(".config_set") > -1) {
                 JsonObject db = res[1].as<JsonObject>();
                 c = db["mcu_ybl"].as<JsonArray>();
@@ -648,14 +648,7 @@ namespace a7129namespace
                 JsonObject db = res.add<JsonObject>();
                 c = db["mcu_ybl"].to<JsonArray>();
                config_get(c);
-            }
-            else if (api.indexOf(".config.idsInfo.clear") > -1)
-            {
-                std::get<1>(config).clear();
-                JsonObject db = res.add<JsonObject>();
-                c = db["mcu_ybl"].to<JsonArray>();
-                config_get(c);
-            }
+            } 
             else {
                 res[0].set(api + " api error");
             }
@@ -677,15 +670,15 @@ namespace a7129namespace
         {
             bool idadd = true;
             taskParam_t* param = (taskParam_t*)ptr;
-            idsInfo_t& idsInfo = std::get<1>(config);
+            idsInfo_t& idsInfo = std::get<0>(config);
             InitRF(); // init RF,最后一个字段0x8E,0x12,0x86
             pinMode(GIO1, INPUT_PULLUP);
             attachInterrupt(GIO1, CRC_Rx, FALLING); // 创建中断
             StrobeCMD(CMD_RX);                      // 设为接收模式
             rx_buff_t rx_buff;
             crcRxQueueHandle = xQueueCreate(5, sizeof(rx_buff));
-            TimerHandle_t yblTimer = xTimerCreate("yblTimer", pdMS_TO_TICKS(std::get<2>(config)), pdFALSE, param->onMessage, timerCallback);
-            TimerHandle_t yblTimer2 = xTimerCreate("yblTimer2", pdMS_TO_TICKS(std::get<3>(config)), pdTRUE, param->onMessage, timerCallback);
+            TimerHandle_t yblTimer = xTimerCreate("yblTimer", pdMS_TO_TICKS(std::get<1>(config)), pdFALSE, param->onMessage, timerCallback);
+            TimerHandle_t yblTimer2 = xTimerCreate("yblTimer2", pdMS_TO_TICKS(std::get<2>(config)), pdTRUE, param->onMessage, timerCallback);
             xTimerStart(yblTimer2, 0);
             param->onStart();
             while (1)

@@ -6,6 +6,7 @@
 #include <tuple>
 #include <WiFi.h>
 #include <functional>
+#include <myStruct_t.h>
 // #include <Update.h>     //更新固件的核心类
 #include <ArduinoOTA.h> //无线方式更新固件，这是基于udp协议的
 // #include <HTTPUpdateServer.h>//http方式更新固件，只能基于#include <WebServer.h>进行更新
@@ -23,16 +24,16 @@ public:
   AsyncWebServer* serverObj;
   AsyncWebSocket* wsObj;
   AsyncEventSource* esObj;
-  MyServer(uint16_t port):wsObj(nullptr), esObj(nullptr) 
+  MyServer(uint16_t port) :wsObj(nullptr), esObj(nullptr)
   {
     serverObj = new AsyncWebServer(port);
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
     serverObj->begin();
   }
   typedef std::tuple<String> webPageConfig_t;
-  void webPageServerInit(webPageConfig_t &c)
+  void webPageServerInit(webPageConfig_t& c)
   {
-    String &internetPath=std::get<0>(c);
+    String& internetPath = std::get<0>(c);
     serverObj->on("/", HTTP_GET, [&internetPath](AsyncWebServerRequest* request)
       {
         AsyncResponseStream* response = request->beginResponseStream("text/html");
@@ -50,7 +51,7 @@ public:
     serverObj->serveStatic("/", SPIFFS, "/"); //.setDefaultFile("index.htm");
   }
   typedef std::tuple<String> esConfig_t;
-  void esServerInit(esConfig_t &c)
+  void esServerInit(esConfig_t& c)
   {
     esObj = new AsyncEventSource(std::get<0>(c));
     esObj->onConnect([](AsyncEventSourceClient* client)
@@ -58,62 +59,40 @@ public:
     serverObj->addHandler(esObj);
   }
   typedef std::tuple<String> wsConfig_t;
-  void wsServerInit(wsConfig_t &c, std::function<void(const String&)> callback)
+  void wsServerInit(wsConfig_t& c, QueueHandle_t onMessage)
   {
     wsObj = new AsyncWebSocket(std::get<0>(c));
-    wsObj->onEvent([callback](AsyncWebSocket* server, AsyncWebSocketClient* client, AwsEventType type, void* arg, uint8_t* data, size_t len)
+    // wsObj->on
+    wsObj->onEvent([onMessage](AsyncWebSocket* server, AsyncWebSocketClient* client, AwsEventType type, void* arg, uint8_t* data, size_t len)
       {
-        if (type == WS_EVT_CONNECT)
+        if (type == WS_EVT_DATA)
+        {
+          AwsFrameInfo* info = (AwsFrameInfo*)arg;
+          myStruct_t s;
+          if (info->opcode == WS_TEXT)
+          {
+            for (size_t i = 0; i < info->len; i++)
+            {
+              sprintf(s, "%s",(char*)&data[i]);
+            }
+          }
+          if (xQueueSend(onMessage, &s, 0) != pdPASS)
+            ESP_LOGV("debug", "onTaskQueueHandle is full");
+        }
+        else if (type == WS_EVT_CONNECT)
         {
           server->printfAll("[\"Hello Client :\", %u]", client->id());
         }
-        else if (type == WS_EVT_DATA)
-        {
-          AwsFrameInfo* info = (AwsFrameInfo*)arg;
-          String msg = "";
-          if (info->final && info->index == 0 && info->len == len)
-          {
-            if (info->opcode == WS_TEXT)
-            {
-              for (size_t i = 0; i < info->len; i++)
-              {
-                msg += (char)data[i];
-              }
-            }
-            else
-            {
-              char buff[3];
-              for (size_t i = 0; i < info->len; i++)
-              {
-                sprintf(buff, "%02x ", (uint8_t)data[i]);
-                msg += buff;
-              }
-            }
-          }
-          else
-          {
-            if (info->opcode == WS_TEXT)
-            {
-              for (size_t i = 0; i < len; i++)
-              {
-                msg += (char)data[i];
-              }
-            }
-            else
-            {
-              char buff[3];
-              for (size_t i = 0; i < len; i++)
-              {
-                sprintf(buff, "%02x ", (uint8_t)data[i]);
-                msg += buff;
-              }
-            }
-          }
-          callback(msg);
+        else if (type == WS_EVT_DISCONNECT) {
+          server->printfAll("ws[%s][%u] disconnect: %u\n", server->url(), client->id());
         }
-        else {
-          callback("mcu 不认识的事件 ");
-        } });
+        else if (type == WS_EVT_ERROR) {
+          server->printfAll("ws[%s][%u] error(%u): %s\n", server->url(), client->id(), *((uint16_t*)arg), (char*)data);
+        }
+        else if (type == WS_EVT_PONG) {
+          server->printfAll("ws[%s][%u] pong[%u]: %s\n", server->url(), client->id(), len, (len) ? (char*)data : "");
+        }
+      });
     serverObj->addHandler(wsObj);
   }
   void onFileUploadInit(void)
