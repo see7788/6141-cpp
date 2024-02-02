@@ -7,7 +7,7 @@ try:
     outDir = os.path.abspath(PROJECT_DIR+"/data")
     os.chdir("../ts")
     print("当前：", os.getcwd())
-    cmd=f"esno src/dz002-cpp/createjson.ts --outDir={outDir}"
+    cmd=f"esno src/dz002-cppWeb/writeFile.ts --outDir={outDir}"
     env.Execute(cmd)
 except Exception as e:
     print("错误", e)
