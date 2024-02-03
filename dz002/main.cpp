@@ -221,13 +221,12 @@ void onFun(myStruct_t& s) {
   else {
     String api = doc[0].as<String>();
     JsonObject db;
-    if (api == "mcu_state_get")
+    if (api == "mcu_base_subscriber")
     {
       doc.clear();
-      doc[0].set("set");
       db = doc.add<JsonObject>();
-      config_get(db);
-      JsonArray mcu_state = db["mcu_state"].to<JsonArray>();
+      // config_get(db);
+      JsonArray mcu_state = db[api].to<JsonArray>();
       uint32_t ulBits = xEventGroupGetBits(state.egGroupHandle); // 获取 Event Group 变量当前值
       mcu_state.add(state.macId);
       JsonArray egBit = mcu_state.add<JsonArray>();
@@ -399,16 +398,18 @@ void sendTask(void* nullparam) {
           state.serialObj->begin(std::get<0>(config.mcu_serial));
           state.serialObj->onReceive([]()
             {
-              while (state.serialObj->available()) {
-                myStruct_t s;
-                const char* str = state.serialObj->readStringUntil('\n').c_str();
-                strncpy(s, str, sizeof(s) - 1);
-                s[sizeof(s) - 1] = '\0';
-                if (xQueueSend(state.onTaskQueueHandle, &s, 0) != pdPASS) {
-                  state.serialObj->println("onTaskQueueHandle is full");
-                };
-                vTaskDelay(50);
-              }
+              // while (state.serialObj->available()) {
+              String str = state.serialObj->readStringUntil('\n');
+              const char* strp = str.c_str();
+              // ESP_LOGV("debug", "l:%i,str:%s", strlen(strp), strp);
+              myStruct_t s;
+              strncpy(s, strp, sizeof(s) - 1);
+              s[sizeof(s) - 1] = '\0';
+              if (xQueueSend(state.onTaskQueueHandle, &s, 0) != pdPASS) {
+                state.serialObj->println("onTaskQueueHandle is full");
+              };
+              // vTaskDelay(50);
+              // }
             });
           xEventGroupSetBits(state.egGroupHandle, EGBIG_SERIAL);
           state.serialObj->println("EGBIG_SERIAL SetBits");
@@ -505,15 +506,15 @@ void setup()
 void loop(void)
 {
   //uxTaskGetStackHighWaterMark剩余可用
-  printf("heapSize-%d,freeHeap-%d\n", ESP.getHeapSize(), ESP.getFreeHeap());
+  ESP_LOGV("debug", "heapSize-%d,freeHeap-%d\n", ESP.getHeapSize(), ESP.getFreeHeap());
 
-  printf("main Priority-%u,WaterMark-%u;\n", uxTaskPriorityGet(NULL), uxTaskGetStackHighWaterMark(NULL));
+  ESP_LOGV("debug", "main Priority-%u,WaterMark-%u;\n", uxTaskPriorityGet(NULL), uxTaskGetStackHighWaterMark(NULL));
 
-  printf("send Priority-%u,WaterMark-%u, setting-%u;\n", state.sendTaskPriority, uxTaskGetStackHighWaterMark(state.sendTaskHandle), state.sendTaskSize);
-  
-  printf("on Priority-%u,WaterMark-%u, setting-%u;\n", state.onTaskPriority, uxTaskGetStackHighWaterMark(state.onTaskHandle), state.onTaskSize);
+  ESP_LOGV("debug", "send Priority-%u,WaterMark-%u, setting-%u;\n", state.sendTaskPriority, uxTaskGetStackHighWaterMark(state.sendTaskHandle), state.sendTaskSize);
 
-  printf("ybl Priority-%u,WaterMark-%u, setting-%u;\n\n\n", state.yblTaskPriority, uxTaskGetStackHighWaterMark(state.yblTaskHandle), state.yblTaskSize);
+  ESP_LOGV("debug", "on Priority-%u,WaterMark-%u, setting-%u;\n", state.onTaskPriority, uxTaskGetStackHighWaterMark(state.onTaskHandle), state.onTaskSize);
+
+  ESP_LOGV("debug", "ybl Priority-%u,WaterMark-%u, setting-%u;\n\n\n", state.yblTaskPriority, uxTaskGetStackHighWaterMark(state.yblTaskHandle), state.yblTaskSize);
 
   vTaskDelay(2000);
 }
