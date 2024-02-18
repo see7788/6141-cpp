@@ -634,37 +634,18 @@ namespace a7129namespace
             StrobeCMD(CMD_PLL);
             StrobeCMD(CMD_RX); // 设置为接收模式
         }
-        void api(JsonArray res)
-        {
-            String api = res[0].as<String>();
-            JsonArray c;
-            res[0].set("mcu_ybl.set");
-            if (api.indexOf(".config_set") > -1) {
-                JsonObject db = res[1].as<JsonObject>();
-                c = db["mcu_ybl"].as<JsonArray>();
-                config_set(c);
-            }
-            else if (api.indexOf(".config_get") > -1) {
-                JsonObject db = res.add<JsonObject>();
-                c = db["mcu_ybl"].to<JsonArray>();
-               config_get(c);
-            } 
-            else {
-                res[0].set(api + " api error");
-            }
-        }
-        void timerCallback(TimerHandle_t xTimer) {
-            QueueHandle_t q = (QueueHandle_t)pvTimerGetTimerID(xTimer);
-            myStruct_t s;
-            strcpy(s, "[\"mcu_ybl.config_get\"]");
-            if (xQueueSend(q, &s, 0) != pdPASS) {
-                ESP_LOGV("debug", "Queue is full");
-            }
-        }
+        // void timerCallback(TimerHandle_t xTimer) {
+        //     QueueHandle_t q = (QueueHandle_t)pvTimerGetTimerID(xTimer);
+        //     myStruct_t s;
+        //     strcpy(s, "[\"mcu_ybl.config_get\"]");
+        //     if (xQueueSend(q, &s, 0) != pdPASS) {
+        //         ESP_LOGV("debug", "Queue is full");
+        //     }
+        // }
         typedef struct
         {
             std::function<void(void)> onStart;
-            QueueHandle_t onMessage;
+            TimerCallbackFunction_t onMessage;
         } taskParam_t;
         void mainTask(void* ptr)
         {
@@ -677,9 +658,9 @@ namespace a7129namespace
             StrobeCMD(CMD_RX);                      // 设为接收模式
             rx_buff_t rx_buff;
             crcRxQueueHandle = xQueueCreate(5, sizeof(rx_buff));
-            TimerHandle_t yblTimer = xTimerCreate("yblTimer", pdMS_TO_TICKS(std::get<1>(config)), pdFALSE, param->onMessage, timerCallback);
-            TimerHandle_t yblTimer2 = xTimerCreate("yblTimer2", pdMS_TO_TICKS(std::get<2>(config)), pdTRUE, param->onMessage, timerCallback);
-            xTimerStart(yblTimer2, 0);
+            TimerHandle_t yblTimer = xTimerCreate("yblTimer", pdMS_TO_TICKS(std::get<1>(config)), pdFALSE, NULL, param->onMessage);
+            TimerHandle_t yblTimer2 = xTimerCreate("yblTimer2", pdMS_TO_TICKS(std::get<2>(config)), pdTRUE, NULL, param->onMessage);
+            xTimerStart(yblTimer2, 50);
             param->onStart();
             while (1)
             {
@@ -695,7 +676,7 @@ namespace a7129namespace
                         idsInfo[id_val] = {
                             .type = type_val,
                             .state = state_val };
-                        xTimerStart(yblTimer, 0);
+                        xTimerStart(yblTimer, 50);
                     }
                 }
                 // ESP_LOGV("loop", "..........");
