@@ -171,7 +171,7 @@ void config_get(JsonObject obj)
   JsonArray json_wsServer = obj["mcu_wsServer"].to<JsonArray>();
   json_wsServer.add(std::get<0>(config.mcu_wsServer));
 }
-void init_config(void) {
+void config_init(void) {
   JsonDocument doc;
   state.fsConfigObj->readFile(doc);
   //serializeJson(doc, *(state.serialObj));
@@ -192,7 +192,7 @@ void init_config(void) {
   xEventGroupSetBits(state.egGroupHandle, EGBIG_FSCONFIG);
   ESP_LOGV("DEBUG", "EGBIG_FSCONFIG SetBits");
 }
-void init_ipc() {
+void ipc_init() {
   String* baseIpc = &std::get<0>(config.mcu_base);
   if ((*baseIpc).isEmpty()) {
     ESP_LOGE("DEBUG", "(*baseIpc).isEmpty()");
@@ -443,8 +443,8 @@ void setup()
   state.sendTaskSize = 1024 * 4;
   state.macId = String(ESP.getEfuseMac());
   // ESP_ERROR_CHECK(esp_task_wdt_init(20000, false)); // 初始化看门狗
-   // ESP_ERROR_CHECK(esp_task_wdt_add(xTaskGetIdleTaskHandleForCPU(0)));
-   // ESP_ERROR_CHECK(esp_task_wdt_add(xTaskGetIdleTaskHandleForCPU(1)));
+  // ESP_ERROR_CHECK(esp_task_wdt_add(xTaskGetIdleTaskHandleForCPU(0)));
+  // ESP_ERROR_CHECK(esp_task_wdt_add(xTaskGetIdleTaskHandleForCPU(1)));
   ESP_ERROR_CHECK(esp_event_loop_create_default());
   ESP_ERROR_CHECK(esp_event_handler_register(ESP_EVENT_ANY_BASE, ESP_EVENT_ANY_ID, esp_eg_on, (void*)__func__));
   ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, esp_eg_on, (void*)__func__));
@@ -459,7 +459,7 @@ void setup()
     vTaskDelete(NULL);
   }
   else {
-    init_config();
+    config_init();
   }
   xEventGroupWaitBits(state.egGroupHandle, EGBIG_FSCONFIG, pdFALSE, pdTRUE, portMAX_DELAY);
 
@@ -469,7 +469,7 @@ void setup()
     xEventGroupWaitBits(state.egGroupHandle, EGBIG_NET, pdFALSE, pdTRUE, portMAX_DELAY);
   }
 
-  init_ipc();
+  ipc_init();
 
   state.sendTaskQueueHandle = xQueueCreate(10, sizeof(myStruct_t));
   if (!state.sendTaskQueueHandle) {

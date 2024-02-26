@@ -2,7 +2,6 @@
 #define a7129namespace_h
 #include <Arduino.h>
 #include <stdlib.h>
-#include <myStruct_t.h>
 #include <tuple>
 #include <unordered_map>
 #include <time.h>
@@ -499,6 +498,7 @@ namespace a7129namespace
         A7129_Cal();           // IF and VCO calibration
         delayMicroseconds(1);  // for crystal stabilized
     }
+
     namespace yblnamespace
     {
         QueueHandle_t crcRxQueueHandle;
@@ -543,7 +543,7 @@ namespace a7129namespace
         }
         void CRC_Rx(void)
         {
-            Uint8 rx_buff[64];
+            rx_buff_t rx_buff;
             StrobeCMD(CMD_RX);
             Uint8 i;
             StrobeCMD(CMD_RFR); // RX FIFO address pointer reset
@@ -634,14 +634,6 @@ namespace a7129namespace
             StrobeCMD(CMD_PLL);
             StrobeCMD(CMD_RX); // 设置为接收模式
         }
-        // void timerCallback(TimerHandle_t xTimer) {
-        //     QueueHandle_t q = (QueueHandle_t)pvTimerGetTimerID(xTimer);
-        //     myStruct_t s;
-        //     strcpy(s, "[\"mcu_ybl.config_get\"]");
-        //     if (xQueueSend(q, &s, 0) != pdPASS) {
-        //         ESP_LOGV("debug", "Queue is full");
-        //     }
-        // }
         typedef struct
         {
             std::function<void(void)> onStart;
@@ -682,6 +674,7 @@ namespace a7129namespace
                 // ESP_LOGV("loop", "..........");
             }
         }
+
     }
 };
 #endif
