@@ -169,7 +169,7 @@ void ipc_init(void) {
         myStruct_t s;
         String str = state.serialObj->readStringUntil('\n');
         if (str.isEmpty()) {
-          strcpy(s, "xxxx");
+          strcpy(s, " isEmpty");
         }
         else {
           const char* strp = str.c_str();
@@ -297,87 +297,90 @@ void onTask(void* nullparam)
     if (xQueueReceive(state.onTaskQueueHandle, &s, portMAX_DELAY) == pdPASS)
     {
       JsonDocument doc;
+      JsonObject db;
       DeserializationError error = deserializeJson(doc, s);//, DeserializationOption::NestingLimit(5));
       if (error)
       {
         doc.clear();
-        doc["error"].set("onTask deserializeJson error");
-        doc["str"].set(s);
+        doc.add("onTask deserializeJson error");
+        doc.add(s);
       }
       else {
-        String api = doc[0].as<String>();
-        JsonObject db;
-        if (api == "mcu_state_publish")
-        {
+        JsonVariant apiref = doc[1].as<JsonVariant>();
+        String api = apiref.as<String>();
+        if (doc[0].as<String>() != std::get<2>(config.mcu_base)) {
           doc.clear();
-          doc.add("mcu_state_publish");
-          db = doc.add<JsonObject>();
-          JsonArray mcu_state = db["mcu_state"].to<JsonArray>();
-          uint32_t ulBits = xEventGroupGetBits(state.egGroupHandle); // 获取 Event Group 变量当前值
-          mcu_state.add(state.macId);
-          JsonArray egBits = mcu_state.add<JsonArray>();
-          for (int i = sizeof(ulBits) * 8 - 1; i >= 0; i--)
+          doc.add("onTask versionId error");
+          doc.add(s);
+        }
+        else {
+          if (api == "mcu_state_publish")
           {
-            uint32_t mask = 1 << i;
-            egBits.add(!!(ulBits & mask));
+            db = doc.add<JsonObject>();
+            JsonArray mcu_state = db["mcu_state"].to<JsonArray>();
+            uint32_t ulBits = xEventGroupGetBits(state.egGroupHandle); // 获取 Event Group 变量当前值
+            mcu_state.add(state.macId);
+            JsonArray egBits = mcu_state.add<JsonArray>();
+            for (int i = sizeof(ulBits) * 8 - 1; i >= 0; i--)
+            {
+              uint32_t mask = 1 << i;
+              egBits.add(!!(ulBits & mask));
+            }
+            mcu_state.add(ETH.localIP());
+            mcu_state.add(WiFi.localIP());
           }
-          mcu_state.add(ETH.localIP());
-          mcu_state.add(WiFi.localIP());
-        }
-        else if (api == "mcu_ybldatas_publish") {
-          doc.clear();
-          doc.add("mcu_ybldatas_publish");
-          db = doc.add<JsonObject>();
-          yblnamespace::config_ybldatas_get(db);
-        }
-        // else if (api == "mcu_ybl_send") {}
-        else if (api == "config_set")
-        {
-          db = doc[1].as<JsonObject>();
-          config_set(db);
-          if (db.containsKey("mcu_base")) {
-            ipc_init();
-            vTaskDelay(1000);
+          else if (api == "mcu_ybldatas_publish") {
+            db = doc.add<JsonObject>();
+            yblnamespace::config_ybldatas_get(db);
           }
-        }
-        else if (api == "config_get")
-        {
-          doc.clear();
-          doc[0].set("config_set");
-          db = doc.add<JsonObject>();
-          config_get(db);
-        }
-        else if (api == "config_toFile")
-        {
-          doc.clear();
-          doc[0].set("config_set");
-          db = doc.add<JsonObject>();
-          config_get(db);
-          bool success = state.fsConfigObj->writeFile(db);
-          if (!success) {
-            doc.clear();
-            api.concat("onTask fsConfigObj->writeFile error");
-            doc.add(api);
+          // else if (api == "mcu_ybl_send") {}
+          else if (api == "config_set")
+          {
+            db = doc[2].as<JsonObject>();
+            config_set(db);
+            if (db.containsKey("mcu_base")) {
+              ipc_init();
+              vTaskDelay(1000);
+            }
           }
-        }
-        else if (api == "config_fromFile")
-        {
-          doc[0].set("config_set");
-          db = doc.add<JsonObject>();
-          bool success = state.fsConfigObj->readFile(db);
-          if (!success) {
-            doc.clear();
-            api.concat("onTask fsConfigObj->readFile error");
-            doc.add(api);
+          else if (api == "config_get")
+          {
+            apiref.set("config_set");
+            db = doc.add<JsonObject>();
+            config_get(db);
           }
-        }
-        else if (api == "mcuRestart") {
-          ESP.restart();
-        }
-        else
-        {
-          api.concat("onTask api error");
-          doc[0].set(api);
+          else if (api == "config_toFile")
+          {
+            apiref.set("config_set");
+            db = doc.add<JsonObject>();
+            config_get(db);
+            bool success = state.fsConfigObj->writeFile(db);
+            if (!success) {
+              doc.clear();
+              api.concat("onTask fsConfigObj->writeFile error");
+              doc.add(api);
+            }
+          }
+          else if (api == "config_fromFile")
+          {
+            apiref.set("config_set");
+            db = doc.add<JsonObject>();
+            bool success = state.fsConfigObj->readFile(db);
+            if (!success) {
+              doc.clear();
+              api.concat("onTask fsConfigObj->readFile error");
+              doc.add(api);
+            }
+          }
+          else if (api == "mcuRestart") {
+            ESP.restart();
+          }
+          else
+          {
+            api.concat("onTask api error");
+            apiref.set(api);
+          }
+
         }
       }
       doc.add(state.macId);
@@ -391,7 +394,6 @@ void onTask(void* nullparam)
 //if (xSemaphoreTake(state.configLock, portMAX_DELAY) == pdTRUE)
 // xSemaphoreGive(state.configLock);
 void sendTask(void* nullparam) {
-  String* baseIpc = &std::get<0>(config.mcu_base);
   myStruct_t s;
   state.sendTaskQueueHandle = xQueueCreate(10, sizeof(s));
   if (!state.sendTaskQueueHandle) {
@@ -404,17 +406,18 @@ void sendTask(void* nullparam) {
   {
     if (xQueueReceive(state.sendTaskQueueHandle, &s, portMAX_DELAY) == pdPASS)
     {
+      String baseIpc = std::get<0>(config.mcu_base);
       // ESP_LOGV("", "nullptr %s", state.serialObj == 0 ? "false" : "true");
       // ESP_LOGV("", "NULL %s", state.serialObj == NULL ? "false" : "true");
       // ESP_LOGV("", "serialObj 指针的值为：%d", state.serialObj);
       // ESP_LOGV("", "state.myServerObj->esObj 指针的值为：%d", state.myServerObj);
-      if (*baseIpc == "mcu_wsClient") {
+      if (baseIpc == "mcu_wsClient") {
         state.wsClientObj->send(s);
       }
-      else if (*baseIpc == "mcu_wsServer") {
+      else if (baseIpc == "mcu_wsServer") {
         state.myServerObj->wsObj->textAll(s);
       }
-      else if (*baseIpc == "mcu_esServer") {
+      else if (baseIpc == "mcu_esServer") {
         state.myServerObj->esObj->send(s);
       }
       // else if (*baseIpc == "mcu_mqttClient") {}
@@ -429,7 +432,8 @@ void sendTask(void* nullparam) {
   }
 }
 void ybltimerCallback(TimerHandle_t xTimer) {
-  myStruct_t s = "[\"mcu_ybldatas_publish\"]";
+  myStruct_t s;
+  snprintf(s, sizeof(s), "[\"%s\",\"mcu_ybldatas_publish\"]", std::get<2>(config.mcu_base).c_str());
   if (xQueueSend(state.onTaskQueueHandle, &s, 50) != pdPASS) {
     ESP_LOGD("sendTask", "sendTaskQueueHandle is full");
   }
