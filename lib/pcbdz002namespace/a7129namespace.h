@@ -502,6 +502,7 @@ namespace a7129namespace
     namespace yblnamespace
     {
         QueueHandle_t crcRxQueueHandle;
+        QueueHandle_t sendQueueHandle;
         Uint8 CRC16_High, CRC16_Low;
         Uint8 CRC16_LookupHigh[16] = {
             0x00, 0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70,
@@ -544,8 +545,8 @@ namespace a7129namespace
         void CRC_Rx(void)
         {
             rx_buff_t rx_buff;
-            StrobeCMD(CMD_RX);
             Uint8 i;
+            StrobeCMD(CMD_RX);
             StrobeCMD(CMD_RFR); // RX FIFO address pointer reset
             digitalWrite(SCS, LOW);
             ByteSend(CMD_FIFO_R);                 // RX FIFO read command
@@ -579,6 +580,7 @@ namespace a7129namespace
         typedef Uint8 state_t;
         typedef struct
         {
+            id_t id;
             type_t type;
             state_t state;
         } idInfo_t;
@@ -600,81 +602,96 @@ namespace a7129namespace
             }
             config = std::make_tuple(idsInfo, json[1].as<int>(), json[2].as<int>());
         }
-        void config_get(JsonArray res) {
+        void config_ybldatas_get(JsonObject json_idsInfo) {
             idsInfo_t& idsInfo = std::get<0>(config);
-            JsonObject json_idsInfo = res.add<JsonObject>();
             for (const auto& pair : idsInfo)
             {
                 JsonObject v = json_idsInfo[String(pair.first)].to<JsonObject>();
                 v["type"] = pair.second.type;
                 v["state"] = pair.second.state;
             }
+        }
+        void config_get(JsonArray res) {
+            JsonObject json_idsInfo = res.add<JsonObject>();
+            config_ybldatas_get(json_idsInfo);
             res.add(std::get<1>(config));
             res.add(std::get<2>(config));
             // serializeJson(res,Serial);
             //ESP_LOGV("debug", "%s,%d,%d", std::get<0>(config).c_str(), std::get<2>(config), std::get<3>(config));
         }
-        void send(id_t id, state_t state)
+        void send(idInfo_t* s) {
+            if (xQueueSend(sendQueueHandle, s, 50) != pdPASS) {
+                ESP_LOGD("sendTask", "sendQueueHandle is full");
+            }
+        }
+        typedef struct
         {
-            idsInfo_t& idsInfo = std::get<0>(config);
-            idInfo_t idInfo = idsInfo[id];
-            StrobeCMD(CMD_TX);
-            Uint8 db[8]; // 需要发送的数据
-            // id1  id2  state  else  else type
-            db[0] = id >> 24;
-            db[1] = (id >> 16) & 0xff;
-            db[2] = state;
-            db[3] = (id >> 8) & 0xff;
-            db[4] = id & 0xff;
-            db[5] = idInfo.type;
-            db[6] = 0xff;
-            InitRF();
-            A7129_WriteFIFO(db); // write data to TX FIFO
-            // StrobeCMD(CMD_STBY);
-            StrobeCMD(CMD_PLL);
-            StrobeCMD(CMD_RX); // 设置为接收模式
+            std::function<void(void)> onStart;
+        } sendTaskParam_t;
+        void sendTask(void* ptr) {
+            sendTaskParam_t *param = (sendTaskParam_t*)ptr;
+            idInfo_t s;
+            sendQueueHandle = xQueueCreate(5, sizeof(s));
+            param->onStart();
+            if (xQueueReceive(sendQueueHandle, &s, portMAX_DELAY) == pdPASS) {
+                // InitRF();
+                detachInterrupt(GIO1);
+                StrobeCMD(CMD_TX);
+                Uint8 db[8]; // 需要发送的数据
+                // id1  id2  state  else  else type
+                db[0] = s.id >> 24;
+                db[1] = (s.id >> 16) & 0xff;
+                db[2] = s.state;
+                db[3] = (s.id >> 8) & 0xff;
+                db[4] = s.id & 0xff;
+                db[5] = s.type;
+                db[6] = 0xff;
+                // InitRF();
+                A7129_WriteFIFO(db); // write data to TX FIFO
+                // StrobeCMD(CMD_STBY);
+                // StrobeCMD(CMD_PLL);
+                // InitRF();
+                StrobeCMD(CMD_RX); // 设置为接收模式
+                attachInterrupt(GIO1, CRC_Rx, FALLING); // 创建中断
+            }
         }
         typedef struct
         {
             std::function<void(void)> onStart;
             TimerCallbackFunction_t onMessage;
-        } taskParam_t;
-        void mainTask(void* ptr)
+        } onTaskParam_t;
+        void onTask(void* ptr)
         {
             bool idadd = true;
-            taskParam_t* param = (taskParam_t*)ptr;
+            onTaskParam_t *param = (onTaskParam_t*)ptr;
             idsInfo_t& idsInfo = std::get<0>(config);
             InitRF(); // init RF,最后一个字段0x8E,0x12,0x86
-            pinMode(GIO1, INPUT_PULLUP);
-            attachInterrupt(GIO1, CRC_Rx, FALLING); // 创建中断
             StrobeCMD(CMD_RX);                      // 设为接收模式
-            rx_buff_t rx_buff;
-            crcRxQueueHandle = xQueueCreate(5, sizeof(rx_buff));
+            attachInterrupt(GIO1, CRC_Rx, FALLING); // 创建中断
+            rx_buff_t s;
+            crcRxQueueHandle = xQueueCreate(5, sizeof(s));
             TimerHandle_t yblTimer = xTimerCreate("yblTimer", pdMS_TO_TICKS(std::get<1>(config)), pdFALSE, NULL, param->onMessage);
             TimerHandle_t yblTimer2 = xTimerCreate("yblTimer2", pdMS_TO_TICKS(std::get<2>(config)), pdTRUE, NULL, param->onMessage);
             xTimerStart(yblTimer2, 50);
             param->onStart();
             while (1)
             {
-                if (xQueueReceive(crcRxQueueHandle, &rx_buff, portMAX_DELAY) == pdPASS)
+                if (xQueueReceive(crcRxQueueHandle, &s, portMAX_DELAY) == pdPASS)
                 {
                     // id_t id_val = rx_buff[0] << 24 | rx_buff[1] << 16 | (rx_buff[5] & 0x0f) << 8 | ((rx_buff[5] & 0x3f) >> 4) * 2;
-                    id_t id_val = static_cast<id_t>(rx_buff[0]) << 24 | static_cast<id_t>(rx_buff[1]) << 16 |
-                        (static_cast<id_t>(rx_buff[5]) & 0x0f) << 8 | ((static_cast<id_t>(rx_buff[5]) & 0x3f) >> 4) * 2;
+                    id_t id_val = static_cast<id_t>(s[0]) << 24 | static_cast<id_t>(s[1]) << 16 | (static_cast<id_t>(s[5]) & 0x0f) << 8 | ((static_cast<id_t>(s[5]) & 0x3f) >> 4) * 2;
                     if (idadd || idsInfo.count(id_val) > 0)
                     {
-                        state_t state_val = rx_buff[2];
-                        type_t type_val = (rx_buff[5] >> 6) + 1;
+                        state_t state_val = s[2];
+                        type_t type_val = (s[5] >> 6) + 1;
                         idsInfo[id_val] = {
                             .type = type_val,
                             .state = state_val };
                         xTimerStart(yblTimer, 50);
                     }
                 }
-                // ESP_LOGV("loop", "..........");
             }
         }
-
     }
 };
 #endif
