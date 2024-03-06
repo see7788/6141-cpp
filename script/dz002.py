@@ -1,18 +1,23 @@
 import os
 Import("env")
 # print(env.Dump())
-try:
-    PIOENV = env.get("PIOENV")
-    PROJECT_DIR = env.get("PROJECT_DIR")
-    outDir = os.path.abspath(PROJECT_DIR+"/data")
-    os.chdir("../ts")
-    print("当前：", os.getcwd())
-    cmd=f"esno src/pcbDz002/cppUse/createConfig.ts --outDir={outDir}"
-    env.Execute(cmd)
-except Exception as e:
-    print("错误", e)
-os.chdir(PROJECT_DIR)  # 返回原始工作目录
-print("当前：", os.getcwd())
+# print("upload" in BUILD_TARGETS,BUILD_TARGETS)
+if ( "upload" in BUILD_TARGETS):
+    try:
+        PIOENV = env.get("PIOENV")
+        PROJECT_DIR = env.get("PROJECT_DIR")
+        outDir = os.path.abspath(PROJECT_DIR+"/data")
+        os.chdir("../ts")
+        print("当前：", os.getcwd())
+        cmd=f"esno src/pcbDz002/cppUse/createConfig.ts --outDir={outDir}"
+        env.Execute(cmd)
+        os.chdir(PROJECT_DIR)  # 返回原始工作目录
+        print("当前：", os.getcwd())
+        cmd=f"pio run -t uploadfs"
+        env.Execute(cmd)
+    except Exception as e:
+        print("错误", e)
+
 # try:
 #     mcuPath = env.get("PROJECT_DIR")
 #     srcFilePath = os.path.abspath(mcuPath+"/../d6227-mcu-ts/src/useStore.ts")
