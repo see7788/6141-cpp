@@ -125,13 +125,13 @@ void ipc_init(void) {
     ESP_LOGE("", "(*baseIpc).isEmpty()");
     vTaskDelete(NULL);
   }
-  if ((xEventGroupGetBits(state.egGroupHandle) & EGBIG_WEBPAGE) != 0) {
+  if ((xEventGroupGetBits(state.egGroupHandle) & EGBIG_WEBPAGE) == 0) {
     state.myServerObj = new MyServer(80);
     state.myServerObj->webPageServerInit(config.mcu_webPageServer);
     xEventGroupSetBits(state.egGroupHandle, EGBIG_WEBPAGE);
   }
   if (baseIpc == "mcu_wsServer") {
-    if ((xEventGroupGetBits(state.egGroupHandle) & EGBIG_WSSERVER) != 0) {
+    if ((xEventGroupGetBits(state.egGroupHandle) & EGBIG_WSSERVER) == 0) {
       state.myServerObj->wsServerInit(config.mcu_wsServer, state.onTaskQueueHandle);
       auto loop = []() {
         state.myServerObj->wsObj->cleanupClients();
@@ -141,7 +141,7 @@ void ipc_init(void) {
     }
   }
   else if (baseIpc == "mcu_esServer") {
-    if ((xEventGroupGetBits(state.egGroupHandle) & EGBIG_ESSERVER) != 0) {
+    if ((xEventGroupGetBits(state.egGroupHandle) & EGBIG_ESSERVER) == 0) {
       state.myServerObj->esServerInit(config.mcu_esServer);
       xEventGroupSetBits(state.egGroupHandle, EGBIG_ESSERVER);
       state.myServerObj->serverObj->on("/post", HTTP_POST, [](AsyncWebServerRequest* request) {
@@ -156,7 +156,7 @@ void ipc_init(void) {
     }
   }
   else if (baseIpc == "mcu_wsClient") {
-    if ((xEventGroupGetBits(state.egGroupHandle) & EGBIG_WSCLENT) != 0) {
+    if ((xEventGroupGetBits(state.egGroupHandle) & EGBIG_WSCLENT) == 0) {
       state.wsClientObj = new websockets::WebsocketsClient();
       state.wsClientObj->connect("39.97.216.195", 6014, "/");
       state.wsClientObj->onEvent([](websockets::WebsocketsEvent event, String data)
@@ -185,7 +185,7 @@ void ipc_init(void) {
     }
   }
   else {
-    if ((xEventGroupGetBits(state.egGroupHandle) & EGBIG_SERIAL) != 0) {
+    if ((xEventGroupGetBits(state.egGroupHandle) & EGBIG_SERIAL) == 0) {
       state.serialObj->setTimeout(50);
       state.serialObj->begin(std::get<0>(config.mcu_serial));
       state.serialObj->onReceive([]()
@@ -327,7 +327,6 @@ void onTask(void* nullparam)
       DeserializationError error = deserializeJson(doc, s);//, DeserializationOption::NestingLimit(5));
       if (error)
       {
-        doc.clear();
         doc.add("onTask deserializeJson error");
         doc.add(s);
       }
@@ -335,80 +334,76 @@ void onTask(void* nullparam)
         JsonVariant apiref = doc[1].as<JsonVariant>();
         String api = apiref.as<String>();
         if (doc[0].as<String>() != std::get<2>(config.mcu_base)) {
-          doc.clear();
-          doc.add("onTask versionId error");
-          doc.add(s);
+          api.concat("onTask versionId error");
+          apiref.set(api);
+          doc[1].set(s);
         }
-        else {
-          if (api == "mcu_state_publish")
+        else if (api == "mcu_state_publish")
+        {
+          db = doc.add<JsonObject>();
+          JsonArray mcu_state = db["mcu_state"].to<JsonArray>();
+          uint32_t ulBits = xEventGroupGetBits(state.egGroupHandle); // 获取 Event Group 变量当前值
+          mcu_state.add(state.macId);
+          JsonArray egBits = mcu_state.add<JsonArray>();
+          for (int i = sizeof(ulBits) * 8 - 1; i >= 0; i--)
           {
-            db = doc.add<JsonObject>();
-            JsonArray mcu_state = db["mcu_state"].to<JsonArray>();
-            uint32_t ulBits = xEventGroupGetBits(state.egGroupHandle); // 获取 Event Group 变量当前值
-            mcu_state.add(state.macId);
-            JsonArray egBits = mcu_state.add<JsonArray>();
-            for (int i = sizeof(ulBits) * 8 - 1; i >= 0; i--)
-            {
-              uint32_t mask = 1 << i;
-              egBits.add(!!(ulBits & mask));
-            }
-            mcu_state.add(ETH.localIP());
-            mcu_state.add(WiFi.localIP());
+            uint32_t mask = 1 << i;
+            egBits.add(!!(ulBits & mask));
           }
-          else if (api == "mcu_ybldatas_publish") {
-            db = doc.add<JsonObject>();
-            yblnamespace::config_ybldatas_get(db);
+          mcu_state.add(ETH.localIP());
+          mcu_state.add(WiFi.localIP());
+        }
+        else if (api == "mcu_ybldatas_publish") {
+          db = doc.add<JsonObject>();
+          yblnamespace::config_ybldatas_get(db);
+        }
+        // else if (api == "mcu_ybl_send") {}
+        else if (api == "config_set")
+        {
+          db = doc[2].as<JsonObject>();
+          config_set(db);
+          if (db.containsKey("mcu_base")) {
+            ipc_init();
+            vTaskDelay(1000);
           }
-          // else if (api == "mcu_ybl_send") {}
-          else if (api == "config_set")
-          {
-            db = doc[2].as<JsonObject>();
-            config_set(db);
-            if (db.containsKey("mcu_base")) {
-              ipc_init();
-              vTaskDelay(1000);
-            }
-          }
-          else if (api == "config_get")
-          {
-            apiref.set("config_set");
-            db = doc.add<JsonObject>();
-            config_get(db);
-          }
-          else if (api == "config_toFile")
-          {
-            apiref.set("config_set");
-            db = doc.add<JsonObject>();
-            config_get(db);
-            bool success = state.fsConfigObj->writeFile(db);
-            if (!success) {
-              doc.clear();
-              api.concat("onTask fsConfigObj->writeFile error");
-              doc.add(api);
-            }
-          }
-          else if (api == "config_fromFile")
-          {
-            apiref.set("config_set");
-            db = doc.add<JsonObject>();
-            bool success = state.fsConfigObj->readFile(db);
-            if (!success) {
-              doc.clear();
-              api.concat("onTask fsConfigObj->readFile error");
-              doc.add(api);
-            }
-          }
-          else if (api == "mcuRestart") {
-            ESP.restart();
-          }
-          else
-          {
-            api.concat("onTask api error");
+        }
+        else if (api == "config_get")
+        {
+          apiref.set("config_set");
+          db = doc.add<JsonObject>();
+          config_get(db);
+        }
+        else if (api == "config_toFile")
+        {
+          apiref.set("config_set");
+          db = doc.add<JsonObject>();
+          config_get(db);
+          bool success = state.fsConfigObj->writeFile(db);
+          if (!success) {
+            api.concat("onTask fsConfigObj->writeFile error");
             apiref.set(api);
           }
-          doc.add(state.macId);
+        }
+        else if (api == "config_fromFile")
+        {
+          apiref.set("config_set");
+          db = doc.add<JsonObject>();
+          bool success = state.fsConfigObj->readFile(db);
+          if (!success) {
+            api.concat("onTask fsConfigObj->readFile error");
+            apiref.set(api);
+          }
+        }
+        else if (api == "mcuRestart") {
+          ESP.restart();
+        }
+        else
+        {
+          api.concat("onTask api error");
+          apiref.set(api);
         }
       }
+      doc[0].set(state.macId);
       serializeJson(doc, s);
       if (xQueueSend(state.sendTaskQueueHandle, &s, 50) != pdPASS) {
         ESP_LOGD("", "sendTaskQueueHandle is full");
@@ -541,16 +536,11 @@ void setup()
 
 void loop(void)
 {
-  //uxTaskGetStackHighWaterMark剩余可用
-  ESP_LOGV("debug", "heapSize-%d,freeHeap-%d\n", ESP.getHeapSize(), ESP.getFreeHeap());
-
-  ESP_LOGV("debug", "main Priority-%u,WaterMark-%u;\n", uxTaskPriorityGet(NULL), uxTaskGetStackHighWaterMark(NULL));
-
-  ESP_LOGV("debug", "send Priority-%u,WaterMark-%u, setting-%u;\n", state.sendTaskPriority, uxTaskGetStackHighWaterMark(state.sendTaskHandle), state.sendTaskSize);
-
-  ESP_LOGV("debug", "on Priority-%u,WaterMark-%u, setting-%u;\n", state.onTaskPriority, uxTaskGetStackHighWaterMark(state.onTaskHandle), state.onTaskSize);
-
-  ESP_LOGV("debug", "ybl Priority-%u,WaterMark-%u, setting-%u;\n\n\n", state.yblOnTaskPriority, uxTaskGetStackHighWaterMark(state.yblOnTaskHandle), state.yblOnTaskSize);
+  ESP_LOGV("debug", "heapSize%d,freeHeap%d;", ESP.getHeapSize(), ESP.getFreeHeap());
+  ESP_LOGV("debug", "main Priority%u,WaterMark%u;", uxTaskPriorityGet(NULL), uxTaskGetStackHighWaterMark(NULL));
+  ESP_LOGV("debug", "send Priority%u,WaterMark%u, setting%u;", state.sendTaskPriority, uxTaskGetStackHighWaterMark(state.sendTaskHandle), state.sendTaskSize);
+  ESP_LOGV("debug", "on Priority%u,WaterMark%u, setting%u;", state.onTaskPriority, uxTaskGetStackHighWaterMark(state.onTaskHandle), state.onTaskSize);
+  ESP_LOGV("debug", "ybl Priority%u,WaterMark%u, setting%u;\n\n\n", state.yblOnTaskPriority, uxTaskGetStackHighWaterMark(state.yblOnTaskHandle), state.yblOnTaskSize);
 
   vTaskDelay(2000);
 }
