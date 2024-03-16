@@ -331,16 +331,22 @@ void onTask(void* nullparam)
         doc.add(s);
       }
       else {
-        JsonVariant apiref = doc[1].as<JsonVariant>();
+        JsonVariant apiref = doc[0].as<JsonVariant>();
         String api = apiref.as<String>();
-        if (doc[0].as<String>() != std::get<2>(config.mcu_base)) {
-          api.concat("onTask versionId error");
+        if (api == "initGet" && doc[1].as<String>() != std::get<2>(config.mcu_base)) {
+          api.concat(" onTask Unauthorized access!");
           apiref.set(api);
-          doc[1].set(s);
+          doc[2].set(s);
         }
-        else if (api == "mcu_state_publish")
+        else if (api == "initGet" || api == "mcu_state_publish")
         {
-          db = doc.add<JsonObject>();
+          
+          if (api == "initGet") {
+            db=doc[1].to<JsonObject>();
+            config_get(db);
+          }else{
+            db = doc.add<JsonObject>();
+          }
           JsonArray mcu_state = db["mcu_state"].to<JsonArray>();
           uint32_t ulBits = xEventGroupGetBits(state.egGroupHandle); // 获取 Event Group 变量当前值
           mcu_state.add(state.macId);
@@ -360,7 +366,7 @@ void onTask(void* nullparam)
         // else if (api == "mcu_ybl_send") {}
         else if (api == "config_set")
         {
-          db = doc[2].as<JsonObject>();
+          db = doc[1].as<JsonObject>();
           config_set(db);
           if (db.containsKey("mcu_base")) {
             ipc_init();
@@ -403,7 +409,7 @@ void onTask(void* nullparam)
           apiref.set(api);
         }
       }
-      doc[0].set(state.macId);
+      doc.add(state.macId);
       serializeJson(doc, s);
       if (xQueueSend(state.sendTaskQueueHandle, &s, 50) != pdPASS) {
         ESP_LOGD("", "sendTaskQueueHandle is full");
@@ -453,7 +459,7 @@ void sendTask(void* nullparam) {
 }
 void ybltimerCallback(TimerHandle_t xTimer) {
   myStruct_t s;
-  snprintf(s, sizeof(s), "[\"%s\",\"mcu_ybldatas_publish\"]", std::get<2>(config.mcu_base).c_str());
+  snprintf(s, sizeof(s), "[\"mcu_ybldatas_publish\"]");
   if (xQueueSend(state.onTaskQueueHandle, &s, 50) != pdPASS) {
     ESP_LOGD("", "sendTaskQueueHandle is full");
   }
