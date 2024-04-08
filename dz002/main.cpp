@@ -340,11 +340,12 @@ void onTask(void* nullparam)
         }
         else if (api == "initGet" || api == "mcu_state_publish")
         {
-          
+
           if (api == "initGet") {
-            db=doc[1].to<JsonObject>();
+            db = doc[1].to<JsonObject>();
             config_get(db);
-          }else{
+          }
+          else {
             db = doc.add<JsonObject>();
           }
           JsonArray mcu_state = db["mcu_state"].to<JsonArray>();
@@ -359,7 +360,7 @@ void onTask(void* nullparam)
           mcu_state.add(ETH.localIP());
           mcu_state.add(WiFi.localIP());
         }
-        else if (api == "mcu_ybldatas_publish") {
+        else if (api == "dz002s_yblState_publish") {
           db = doc.add<JsonObject>();
           yblnamespace::config_ybldatas_get(db);
         }
@@ -409,7 +410,7 @@ void onTask(void* nullparam)
           apiref.set(api);
         }
       }
-      doc.add(state.macId);
+      //doc.add(state.macId);
       serializeJson(doc, s);
       if (xQueueSend(state.sendTaskQueueHandle, &s, 50) != pdPASS) {
         ESP_LOGD("", "sendTaskQueueHandle is full");
@@ -459,7 +460,7 @@ void sendTask(void* nullparam) {
 }
 void ybltimerCallback(TimerHandle_t xTimer) {
   myStruct_t s;
-  snprintf(s, sizeof(s), "[\"mcu_ybldatas_publish\"]");
+  snprintf(s, sizeof(s), "[\"dz002s_yblState_publish\"]");
   if (xQueueSend(state.onTaskQueueHandle, &s, 50) != pdPASS) {
     ESP_LOGD("", "sendTaskQueueHandle is full");
   }
@@ -536,7 +537,6 @@ void setup()
 
   ESP_ERROR_CHECK(esp_event_loop_delete_default());
   ESP_LOGV("", "esp_event_loop_delete");
-
   vTaskDelete(NULL);
 }
 

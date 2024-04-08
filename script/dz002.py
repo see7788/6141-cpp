@@ -9,7 +9,7 @@ if ( "upload" in BUILD_TARGETS):
         outDir = os.path.abspath(PROJECT_DIR+"/data")
         os.chdir("../ts")
         print("当前：", os.getcwd())
-        cmd=f"esno src/pcbDz002/cppUse/createConfig.ts --outDir={outDir}"
+        cmd=f"esno src/pcbDz002/cpp/json.ts --outDir={outDir}"
         env.Execute(cmd)
         os.chdir(PROJECT_DIR)  # 返回原始工作目录
         print("当前：", os.getcwd())
