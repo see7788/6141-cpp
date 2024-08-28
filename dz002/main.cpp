@@ -48,7 +48,7 @@ namespace yblnamespace = pcbdz002namespace::yblnamespace;
 typedef struct
 {
   std::tuple<String, String, String> mcu_base;
-  std::tuple<String, String, String> mcu_wsClient;
+  std::tuple<String, int, String> mcu_wsClient;
   std::tuple<int, String> mcu_serial;
   MyNet::config_t mcu_net;
   MyServer::webPageConfig_t mcu_webPageServer;
@@ -59,6 +59,8 @@ config_t config;
 typedef struct
 {
   String macId;
+  String ETHlocalIP;
+  String WiFilocalIP;
   UBaseType_t taskIndex;
   EventGroupHandle_t egGroupHandle;
   SemaphoreHandle_t configLock;
@@ -96,11 +98,13 @@ void esp_eg_on(void* registEr, esp_event_base_t postEr, int32_t eventId, void* e
   if (postEr == IP_EVENT && eventId == IP_EVENT_STA_GOT_IP)
   {
     xEventGroupSetBits(state.egGroupHandle, EGBIG_NETSTA);
+    state.ETHlocalIP = WiFi.localIP().toString();
     ESP_LOGV("", "EGBIG_NETSTA SetBits");
     use = 1;
   }
   else if (postEr == IP_EVENT && eventId == IP_EVENT_ETH_GOT_IP) {
     xEventGroupSetBits(state.egGroupHandle, EGBIG_NETETH);
+    state.WiFilocalIP =ETH.localIP().toString();
     ESP_LOGV("", "EGBIG_NETETH SetBits");
     use = 1;
   }
@@ -148,6 +152,7 @@ void ipc_init(void) {
         int params = request->params();
         for (int i = 0; i < params; i++) {
           AsyncWebParameter* p = request->getParam(i);
+          //String str ="";
           Serial.printf("POST[%s]: %s\n", p->name().c_str(), p->value().c_str());
         }
         });
@@ -158,7 +163,11 @@ void ipc_init(void) {
   else if (baseIpc == "mcu_wsClient") {
     if ((xEventGroupGetBits(state.egGroupHandle) & EGBIG_WSCLENT) == 0) {
       state.wsClientObj = new websockets::WebsocketsClient();
-      state.wsClientObj->connect("39.97.216.195", 6014, "/");
+      String str = "/";
+      str.concat(state.macId);
+      state.wsClientObj->connect("192.168.110.112", 61415, str);
+      xEventGroupSetBits(state.egGroupHandle, EGBIG_WSCLENT);
+      ESP_LOGV("", "EGBIG_WSCLENT SetBits");
       state.wsClientObj->onEvent([](websockets::WebsocketsEvent event, String data)
         {
           if (event == websockets::WebsocketsEvent::ConnectionOpened)
@@ -169,7 +178,7 @@ void ipc_init(void) {
           else if (event == websockets::WebsocketsEvent::ConnectionClosed)
           {
             xEventGroupClearBits(state.egGroupHandle, EGBIG_WSCLENT);
-            ESP_LOGE("", "EGBIG_WSCLENT SetBits");
+            ESP_LOGE("", "EGBIG_WSCLENT ClearBits");
           }
         });
       state.wsClientObj->onMessage([](websockets::WebsocketsMessage message)
@@ -252,6 +261,11 @@ void config_set(JsonObject obj)
     JsonArray json_wsServer = obj["mcu_wsServer"].as<JsonArray>();
     config.mcu_wsServer = std::make_tuple(json_wsServer[0].as<String>());
   }
+  if (obj.containsKey("mcu_wsClient"))
+  {
+    JsonArray json_wsServer = obj["mcu_wsClient"].as<JsonArray>();
+    config.mcu_wsClient = std::make_tuple(json_wsServer[0].as<String>(), json_wsServer[1].as<int>(), json_wsServer[2].as<String>());
+  }
 }
 void config_get(JsonObject obj)
 {
@@ -280,6 +294,10 @@ void config_get(JsonObject obj)
   json_esServer.add(std::get<0>(config.mcu_esServer));
   JsonArray json_wsServer = obj["mcu_wsServer"].to<JsonArray>();
   json_wsServer.add(std::get<0>(config.mcu_wsServer));
+  JsonArray json_wsClient = obj["mcu_wsClient"].to<JsonArray>();
+  json_wsClient.add(std::get<0>(config.mcu_wsClient));
+  json_wsClient.add(std::get<1>(config.mcu_wsClient));
+  json_wsClient.add(std::get<2>(config.mcu_wsClient));
 }
 void config_init(void) {
   if (!state.fsConfigObj->file_bool)
@@ -357,8 +375,8 @@ void onTask(void* nullparam)
             uint32_t mask = 1 << i;
             egBits.add(!!(ulBits & mask));
           }
-          mcu_state.add(ETH.localIP());
-          mcu_state.add(WiFi.localIP());
+          mcu_state.add(state.ETHlocalIP);
+          mcu_state.add(state.WiFilocalIP);
         }
         else if (api == "dz002s_yblState_publish") {
           db = doc.add<JsonObject>();
